@@ -22,22 +22,67 @@ def load_data():
     combined_df['班級座號'] = combined_df['班級座號'].astype(str).str.strip()
     return combined_df, xls.sheet_names
 
-# 透過原生 JS SpeechSynthesis 播放語音
-def speak_js(text_to_speak):
+# iOS Safari 相容：Web Audio API 音訊與語音播放函式
+def play_sound_and_speech(is_correct, text_to_speak):
+    # is_correct: True (正確搭乘/高音兩聲), False (錯誤搭乘/低音長聲)
+    correct_js = "true" if is_correct else "false"
+    
     js_code = f"""
     <script>
-        function speak() {{
-            if ('speechSynthesis' in window) {{
-                window.speechSynthesis.cancel(); // 停止先前的聲音
-                var msg = new SpeechSynthesisUtterance('{text_to_speak}');
-                msg.lang = 'zh-TW';
-                msg.rate = 1.1; // 語速稍快
-                msg.volume = 1.0;
-                window.speechSynthesis.speak(msg);
+        function playBuzzerAndSpeech() {{
+            try {{
+                // 1. 使用 Web Audio API 播放音效 (100% 支援 iOS Safari)
+                var AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (AudioContext) {{
+                    var ctx = new AudioContext();
+                    
+                    if ({correct_js}) {{
+                        // 【正確】高音嗶嗶兩聲 (880Hz)
+                        var osc1 = ctx.createOscillator();
+                        var gain1 = ctx.createGain();
+                        osc1.type = 'sine';
+                        osc1.frequency.value = 880;
+                        osc1.connect(gain1);
+                        gain1.connect(ctx.destination);
+                        osc1.start(ctx.currentTime);
+                        osc1.stop(ctx.currentTime + 0.15);
+                        
+                        setTimeout(function() {{
+                            var osc2 = ctx.createOscillator();
+                            var gain2 = ctx.createGain();
+                            osc2.type = 'sine';
+                            osc2.frequency.value = 880;
+                            osc2.connect(gain2);
+                            gain2.connect(ctx.destination);
+                            osc2.start(ctx.currentTime);
+                            osc2.stop(ctx.currentTime + 0.15);
+                        }}, 200);
+                    }} else {{
+                        // 【錯誤】低音警示一長聲 (300Hz)
+                        var osc = ctx.createOscillator();
+                        var gain = ctx.createGain();
+                        osc.type = 'sawtooth';
+                        osc.frequency.value = 300;
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start(ctx.currentTime);
+                        osc.stop(ctx.currentTime + 0.5);
+                    }}
+                }}
+
+                // 2. 嘗試呼叫 TTS 語音（若 iOS 支援則同步朗讀）
+                if ('speechSynthesis' in window) {{
+                    window.speechSynthesis.cancel();
+                    var msg = new SpeechSynthesisUtterance('{text_to_speak}');
+                    msg.lang = 'zh-TW';
+                    msg.rate = 1.0;
+                    window.speechSynthesis.speak(msg);
+                }}
+            }} catch(e) {{
+                console.log(e);
             }}
         }}
-        // 延遲 100ms 確保 DOM 載入後播放
-        setTimeout(speak, 100);
+        setTimeout(playBuzzerAndSpeech, 100);
     </script>
     """
     components.html(js_code, height=0, width=0)
@@ -45,15 +90,15 @@ def speak_js(text_to_speak):
 st.title("🚌 校車掃碼 / 放學路線核對系統")
 st.caption("請先選擇車輛路線，開啟鏡頭對準學生證/車票上的 QR Code 即可自動核對！")
 
-# 語音權限解鎖區塊
+# 語音與音效解鎖區塊
 if "audio_unlocked" not in st.session_state:
     st.session_state["audio_unlocked"] = False
 
 if not st.session_state["audio_unlocked"]:
-    st.info("💡 **提示：首次使用請先點擊下方按鈕以啟用語音播報功能。**")
-    if st.button("🔊 點此啟用/測試語音功能"):
+    st.info("💡 **iPhone / 手機用戶提示：首次使用請先點擊下方按鈕以啟用音效播報。**")
+    if st.button("🔊 點此啟用/測試手機音效功能"):
         st.session_state["audio_unlocked"] = True
-        speak_js("語音功能已啟用")
+        play_sound_and_speech(True, "正確搭乘")
         st.rerun()
 
 try:
@@ -100,8 +145,8 @@ try:
                 station_no = student_info['放學站號']
                 
                 if selected_route == actual_route:
-                    # 正確搭乘語音
-                    speak_js("正確搭乘")
+                    # 正確搭乘：播放高音嗶嗶聲 + 語音
+                    play_sound_and_speech(True, "正確搭乘")
                     
                     st.success(f"✅ **准予上車！【{student_name}】搭乘此路線（{selected_route}）。**")
                     
@@ -113,13 +158,13 @@ try:
                         st.metric("放學站名", station_name)
                         st.metric("放學站號", station_no)
                 else:
-                    # 錯誤搭乘語音
-                    speak_js("錯誤搭乘")
+                    # 錯誤搭乘：播放低音警告長聲 + 語音
+                    play_sound_and_speech(False, "錯誤搭乘")
                     
                     st.error(f"🚫 **警告！【{student_name}】搭錯車了！**")
                     st.warning(f"⚠️ 該生**非**搭乘【{selected_route}】\n\n💡 **實際應搭乘路線：**【{actual_route}】\n**放學站名：** {station_name} (站號: {station_no})")
             else:
-                speak_js("錯誤搭乘")
+                play_sound_and_speech(False, "錯誤搭乘")
                 st.error(f"❌ **查無此班級座號（{seat_no}）的搭乘紀錄，請確認 QR Code 內容是否正確。**")
 
 except FileNotFoundError:
