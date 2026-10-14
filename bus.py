@@ -3,59 +3,44 @@ import pandas as pd
 from streamlit_qrcode_scanner import qrcode_scanner
 
 # 設定網頁標題與頁面圖示
-st.set_page_config(page_title="校車掃碼驗證系統", page_icon="🚌", layout="centered")
+st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
-# 極致壓縮空隙 CSS（針對手機畫面最佳化）
+# 適度優化間距，防止文字裁切
 st.markdown("""
     <style>
-        /* 1. 壓低整體外圍邊距 */
+        /* 給予頂部足夠空間，避免標題被瀏覽器頂部裁切 */
         .block-container {
-            padding-top: 0.5rem !important;
-            padding-bottom: 0.5rem !important;
-            padding-left: 0.5rem !important;
-            padding-right: 0.5rem !important;
+            padding-top: 2rem !important;
+            padding-bottom: 1.5rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
         }
-        /* 2. 標題與文字簡化 */
+        /* 標題大小適中 */
         h1 {
-            font-size: 1.2rem !important;
-            margin-bottom: 0rem !important;
-            padding-bottom: 0rem !important;
+            font-size: 1.4rem !important;
+            margin-bottom: 0.3rem !important;
         }
-        /* 3. 壓縮下拉選單與 Radio 按鈕空隙 */
-        div[data-baseweb="select"] {
-            margin-bottom: -0.5rem !important;
-        }
-        div[role="radiogroup"] {
-            margin-top: -0.3rem !important;
-            margin-bottom: -0.3rem !important;
-        }
-        /* 4. 縮小分隔線 */
-        hr {
-            margin-top: 0.2rem !important;
-            margin-bottom: 0.2rem !important;
-        }
-        /* 5. 限制掃描鏡頭 iframe 高度（避免將結果推到底部） */
+        /* 限制掃描鏡頭預覽框高度，避免過高擠壓版面 */
         iframe[title*="qrcode_scanner"] {
-            max-height: 200px !important;
+            max-height: 220px !important;
         }
-        /* 6. 結果通知框（Alert）高度壓縮 */
+        /* 緊湊型的結果通知框與數據卡片 */
         .stAlert {
-            padding: 6px 10px !important;
-            margin-top: 0.2rem !important;
-            margin-bottom: 0.2rem !important;
+            padding: 8px 12px !important;
+            margin-top: 0.4rem !important;
+            margin-bottom: 0.4rem !important;
         }
-        /* 7. Metric 數據框壓縮 */
         [data-testid="stMetric"] {
             background-color: #f8f9fa;
-            padding: 2px 6px !important;
-            border-radius: 4px;
+            padding: 4px 8px !important;
+            border-radius: 6px;
             border: 1px solid #e9ecef;
         }
         [data-testid="stMetricValue"] {
-            font-size: 1rem !important;
+            font-size: 1.1rem !important;
         }
         [data-testid="stMetricLabel"] {
-            font-size: 0.7rem !important;
+            font-size: 0.75rem !important;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -76,23 +61,23 @@ def load_data():
     combined_df['班級座號'] = combined_df['班級座號'].astype(str).str.strip()
     return combined_df, xls.sheet_names
 
-st.title("🚌 校車放學路線核對")
+st.title("🚌 KMSH校車驗證系統")
 
 try:
     df, route_list = load_data()
 
     # 1. 路線下拉選單（預設空白）
     options_with_placeholder = ["-- 請點此選擇路線 --"] + list(route_list)
-    selected_route = st.selectbox("1. 選擇路線：", options_with_placeholder, index=0, label_visibility="collapsed")
+    selected_route = st.selectbox("1. 請選擇當前路線：", options_with_placeholder, index=0)
 
     # 檢查是否已選擇路線
     if selected_route == "-- 請點此選擇路線 --":
-        st.warning("👈 請點選上方選單選擇當前路線。")
+        st.warning("👈 請先選擇當前路線以開啟功能。")
     else:
         st.success(f"📌 當前路線：**{selected_route}**")
 
         # 2. 輸入模式選擇
-        input_mode = st.radio("2. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True, label_visibility="collapsed")
+        input_mode = st.radio("2. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
 
         seat_no = ""
 
@@ -103,7 +88,7 @@ try:
         else:
             seat_no = st.text_input("輸入座號：", placeholder="例如：10337").strip()
 
-        # 3. 進行驗證與結果顯示（保持原本下方顯示順序）
+        # 3. 進行驗證與結果顯示
         if seat_no:
             student_records = df[df['班級座號'] == seat_no]
             st.divider()
