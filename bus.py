@@ -6,18 +6,26 @@ from streamlit_qrcode_scanner import qrcode_scanner
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="校車掃碼驗證系統", page_icon="🚌", layout="centered")
 
-# 使用 Google TTS 產生線上語音播放組件
-def play_audio(text):
+# 使用 Google TTS 產出標準音訊，並透過 st.audio 自動播放
+def play_audio_native(text):
     encoded_text = urllib.parse.quote(text)
     tts_url = f"https://translate.google.com/translate_tts?ie=UTF-8&q={encoded_text}&tl=zh-TW&client=tw-ob"
     
-    # 透過 HTML5 Audio 標籤隱藏式自動播放
+    # 透過 HTML5 audio 標籤與 JS 強制觸發 play()
     audio_html = f"""
-        <audio autoplay style="display:none;">
-            <source src="{tts_url}" type="audio/mpeg">
-        </audio>
+        <audio id="bus_audio" src="{tts_url}" autoplay></audio>
+        <script>
+            var audio = document.getElementById('bus_audio');
+            if (audio) {{
+                audio.play().catch(function(error) {{
+                    console.log("Autoplay blocked, waiting for user click.");
+                }});
+            }}
+        </script>
     """
     st.components.v1.html(audio_html, height=0, width=0)
+    # 同時提供一個備用播放器（隱藏控制列但確保載入）
+    st.audio(tts_url, format="audio/mp3", autoplay=True)
 
 # 讀取 Excel 檔案並快取
 @st.cache_data
@@ -86,7 +94,7 @@ try:
                 # 判斷是否為該路線
                 if selected_route == actual_route:
                     # 播放正確語音
-                    play_audio("正確搭乘")
+                    play_audio_native("正確搭乘")
                     
                     st.success(f"✅ **准予上車！【{student_name}】搭乘此路線（{selected_route}）。**")
                     
@@ -99,13 +107,13 @@ try:
                         st.metric("放學站號", station_no)
                 else:
                     # 播放錯誤語音
-                    play_audio("錯誤搭乘")
+                    play_audio_native("錯誤搭乘")
                     
                     st.error(f"🚫 **警告！【{student_name}】搭錯車了！**")
                     st.warning(f"⚠️ 該生**非**搭乘【{selected_route}】\n\n💡 **實際應搭乘路線：**【{actual_route}】\n**放學站名：** {station_name} (站號: {station_no})")
             else:
                 # 查無此人時亦播放錯誤語音
-                play_audio("錯誤搭乘")
+                play_audio_native("錯誤搭乘")
                 st.error(f"❌ **查無此班級座號（{seat_no}）的搭乘紀錄，請確認 QR Code 內容是否正確。**")
 
 except FileNotFoundError:
