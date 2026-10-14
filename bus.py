@@ -75,7 +75,7 @@ try:
             
             st.divider()
             
-            if Not student_records.empty:
+            if not student_records.empty:
                 student_info = student_records.iloc[0]
                 actual_route = student_info['路線名稱']
                 student_name = student_info['學生姓名']
@@ -83,29 +83,29 @@ try:
                 station_no = student_info['放學站號']
                 
                 # 判斷是否為該路線
-                If selected_route == actual_route:
+                if selected_route == actual_route:
                     # 播放正確語音
-                    Speak_text("正確搭乘")
+                    speak_text("正確搭乘")
                     
-                    St.success(f"✅ **准予上車！【{student_name}】搭乘此路線（{selected_route}）。**")
+                    st.success(f"✅ **准予上車！【{student_name}】搭乘此路線（{selected_route}）。**")
                     
-                    Col1, col2 = st.columns(2)
-                    With col1:
-                        St.metric("學生姓名", student_name)
-                        St.metric("班級座號", seat_no)
-                    With col2:
-                        St.metric("放學站名", station_name)
-                        St.metric("放學站號", station_no)
-                Else:
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("學生姓名", student_name)
+                        st.metric("班級座號", seat_no)
+                    with col2:
+                        st.metric("放學站名", station_name)
+                        st.metric("放學站號", station_no)
+                else:
                     # 播放錯誤語音
-                    Speak_text("錯誤搭乘")
+                    speak_text("錯誤搭乘")
                     
-                    St.error(f"🚫 **警告！【{student_name}】搭錯車了！**")
-                    St.warning(f"⚠️ 該生**非**搭乘【{selected_route}】\n\n💡 **實際應搭乘路線：**【{actual_route}】\n**放學站名：** {station_name} (站號: {station_no})")
-            Else:
+                    st.error(f"🚫 **警告！【{student_name}】搭錯車了！**")
+                    st.warning(f"⚠️ 該生**非**搭乘【{selected_route}】\n\n💡 **實際應搭乘路線：**【{actual_route}】\n**放學站名：** {station_name} (站號: {station_no})")
+            else:
                 # 查無此人時亦播放錯誤語音
-                Speak_text("錯誤搭乘")
-                St.error(f"❌ **查無此班級座號（{seat_no}）的搭乘紀錄，請確認 QR Code 內容是否正確。**")
+                speak_text("錯誤搭乘")
+                st.error(f"❌ **查無此班級座號（{seat_no}）的搭乘紀錄，請確認 QR Code 內容是否正確。**")
 
-Except FileNotFoundError:
-    St.error("❌ 找不到 `大放學12各路線名單.xlsx` 檔案，請確認 Excel 檔與 `bus.py` 放在同一資料夾！")
+except FileNotFoundError:
+    st.error("❌ 找不到 `大放學12各路線名單.xlsx` 檔案，請確認 Excel 檔與 `bus.py` 放在同一資料夾！")
