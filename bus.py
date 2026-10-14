@@ -53,53 +53,62 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 定義時段類別對應的 Excel 檔案名稱
-CATEGORY_FILES = {
-    "上學": "上學各路線名單.xlsx",
-    "大放學 (週一二四五)": "大放學12各路線名單.xlsx",
-    "週一小放學 (第1梯)": "週1小放學1梯各路線名單.xlsx",
-    "週一小放學 (第2梯)": "週1小放學2梯各路線名單.xlsx",
-    "週二小放學 (第1梯)": "週2小放學1梯各路線名單.xlsx",
-    "週二小放學 (第2梯)": "週2小放學2梯各路線名單.xlsx",
-    "週三小放學": "週3小放學各路線名單.xlsx",
-    "週四小放學 (第1梯)": "週4小放學1梯各路線名單.xlsx",
-    "週四小放學 (第2梯)": "週4小放學2梯各路線名單.xlsx",
-    "週五小放學": "週5小放學各路線名單.xlsx",
-    "高國三週六課程": "週六課程各路線名單.xlsx"
+# 定義時段類別對應的 Excel 檔案與篩選規則
+CATEGORY_CONFIG = {
+    "上學": {"file": "上學各路線名單.xlsx", "filter": None},
+    "大放學 (第1梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放1"},
+    "大放學 (第2梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放2"},
+    "週一小放學 (第1梯)": {"file": "週1小放學1梯各路線名單.xlsx", "filter": None},
+    "週一小放學 (第2梯)": {"file": "週1小放學2梯各路線名單.xlsx", "filter": None},
+    "週二小放學 (第1梯)": {"file": "週2小放學1梯各路線名單.xlsx", "filter": None},
+    "週二小放學 (第2梯)": {"file": "週2小放學2梯各路線名單.xlsx", "filter": None},
+    "週三小放學": {"file": "週3小放學各路線名單.xlsx", "filter": None},
+    "週四小放學 (第1梯)": {"file": "週4小放學1梯各路線名單.xlsx", "filter": None},
+    "週四小放學 (第2梯)": {"file": "週4小放學2梯各路線名單.xlsx", "filter": None},
+    "週五小放學": {"file": "週5小放學各路線名單.xlsx", "filter": None},
+    "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
 }
 
 # 讀取指定類別 Excel 檔案並快取
 @st.cache_data
-def load_category_data(file_path):
+def load_category_data(file_path, prefix_filter=None):
     if not os.path.exists(file_path):
         return None, None
         
     xls = pd.ExcelFile(file_path)
     all_dfs = []
     
-    for sheet_name in xls.sheet_names:
+    # 根據 prefix_filter 篩選要載入的工作表
+    target_sheets = xls.sheet_names
+    if prefix_filter:
+        target_sheets = [s for s in xls.sheet_names if s.startswith(prefix_filter)]
+        
+    for sheet_name in target_sheets:
         df = pd.read_excel(xls, sheet_name=sheet_name)
         df['路線名稱'] = sheet_name.strip()
         all_dfs.append(df)
         
+    if not all_dfs:
+        return None, None
+        
     combined_df = pd.concat(all_dfs, ignore_index=True)
     combined_df['班級座號'] = combined_df['班級座號'].astype(str).str.strip()
-    return combined_df, xls.sheet_names
+    return combined_df, target_sheets
 
 st.title("🚌 KMSH校車驗證系統")
 
 # 1. 第一階層：選擇時段類別
-category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_FILES.keys())
+category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
 selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
 
 if selected_category == "-- 請選擇時段/類別 --":
-    st.warning("👈 請先選擇時段/類別（例如：上學、大放學、週一小放學...）。")
+    st.warning("👈 請先選擇時段/類別（例如：上學、大放學 第1梯/第2梯...）。")
 else:
-    file_path = CATEGORY_FILES[selected_category]
-    df, route_list = load_category_data(file_path)
+    config = CATEGORY_CONFIG[selected_category]
+    df, route_list = load_category_data(config["file"], config["filter"])
 
     if df is None:
-        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{file_path}`)，請確認該 Excel 檔已上傳至 GitHub！")
+        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認該 Excel 檔已上傳至 GitHub！")
     else:
         # 2. 第二階層：選擇該時段對應的路線
         route_options = ["-- 請點此選擇路線 --"] + list(route_list)
