@@ -8,21 +8,35 @@ from streamlit_qrcode_scanner import qrcode_scanner
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
-# 設定虛擬 Email 域名 (方便後端對接 Supabase Auth)
-DOMAIN = "@kmsh.edu.tw"
+# 使用者名單與路線名單 Excel 檔案名稱
+USER_FILE = "校車驗證系統使用者名單.xlsx"
 
-# 1. Supabase 連線設定
+# 1. Supabase 連線設定 (僅用於寫入使用紀錄 usage_logs)
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
 
 @st.cache_resource
-def init_supabase() -> Client:
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+def init_supabase():
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception:
+        return None
 
-try:
-    supabase = init_supabase()
-except Exception as e:
-    supabase = None
+supabase = init_supabase()
+
+# 讀取使用者名單 Excel
+@st.cache_data
+def load_users():
+    if not os.path.exists(USER_FILE):
+        return None
+    try:
+        df_users = pd.read_excel(USER_FILE)
+        # 清除字串前後空白
+        for col in df_users.columns:
+            df_users[col] = df_users[col].astype(str).str.strip()
+        return df_users
+    except Exception:
+        return None
 
 # CSS 樣式設定
 st.markdown("""
@@ -74,57 +88,72 @@ st.markdown("""
 # 初始化 Session State 登入狀態
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
-if "username" not in st.session_state:
-    st.session_state["username"] = ""
+if "user_id" not in st.session_state:
+    st.session_state["user_id"] = ""
+if "user_name" not in st.session_state:
+    st.session_state["user_name"] = ""
 if "log_id" not in st.session_state:
     st.session_state["log_id"] = None
 
 # ---------------------------------------------------------
-# 🔒 登入驗證畫面 (使用純使用者名稱)
+# 🔒 登入驗證畫面 (讀取 Excel 進行比對)
 # ---------------------------------------------------------
 if not st.session_state["authenticated"]:
     st.title("🔒 KMSH 校車驗證系統 - 登入")
-    st.caption("請輸入管理員核發之使用者帳號與密碼。")
+    st.caption("請輸入使用者編號與密碼。")
     
+    df_users = load_users()
+    
+    if df_users is None:
+        st.error(f"❌ 找不到使用者名單檔案 (`{USER_FILE}`)，請確認該 Excel 檔已上傳至 GitHub！")
+        st.stop()
+        
     with st.form("login_form"):
-        username = st.text_input("使用者帳號", placeholder="例如：driver01 或 teacher_a").strip()
-        password = st.text_input("密碼", type="password").strip()
+        user_input = st.text_input("使用者編號 (或姓名)", placeholder="例如：user1").strip()
+        password_input = st.text_input("密碼", type="password").strip()
         submit_button = st.form_submit_button("登入系統")
         
         if submit_button:
-            if not username or not password:
+            if not user_input or not password_input:
                 st.error("請輸入帳號與密碼！")
             else:
-                try:
-                    # 後端自動將 username 轉為完整的虛擬 Email 進行驗證
-                    auth_email = f"{username.lower()}{DOMAIN}" if "@" not in username else username
-                    res = supabase.auth.sign_in_with_password({"email": auth_email, "password": password})
-                    
+                # 比對「使用者編號」或「使用者姓名」，且「使用者密碼」需一致
+                matched_user = df_users[
+                    ((df_users["使用者編號"] == user_input) | (df_users["使用者姓名"] == user_input)) & 
+                    (df_users["使用者密碼"] == password_input)
+                ]
+                
+                if not matched_user.empty:
+                    user_info = matched_user.iloc[0]
                     st.session_state["authenticated"] = True
-                    st.session_state["username"] = username
+                    st.session_state["user_id"] = str(user_info["使用者編號"])
+                    st.session_state["user_name"] = str(user_info["使用者姓名"])
                     
-                    # 紀錄登入時間至使用日誌 (usage_logs)
-                    log_res = supabase.table("usage_logs").insert({
-                        "user_email": username,  # 直接紀錄使用者自訂帳號
-                        "login_time": datetime.now().isoformat()
-                    }).execute()
-                    
-                    if log_res.data:
-                        st.session_state["log_id"] = log_res.data[0]["id"]
-                        
-                    st.success("✅ 驗證成功，正在進入系統...")
+                    # 將登入紀錄寫入 Supabase usage_logs 資料表
+                    if supabase:
+                        try:
+                            log_res = supabase.table("usage_logs").insert({
+                                "user_email": f"{st.session_state['user_id']} ({st.session_state['user_name']})",
+                                "login_time": datetime.now().isoformat()
+                            }).execute()
+                            if log_res.data:
+                                st.session_state["log_id"] = log_res.data[0]["id"]
+                        except Exception:
+                            pass
+                            
+                    st.success(f"✅ 歡迎 {st.session_state['user_name']}，正在進入系統...")
                     st.rerun()
-                except Exception as e:
-                    st.error("❌ 登入失敗：帳號或密碼錯誤，請重新確認。")
-    st.stop()  # 未驗證通過前，直接中斷執行後續畫面
+                else:
+                    st.error("❌ 登入失敗：使用者編號或密碼錯誤，請重新確認。")
+    st.stop()
 
 # ---------------------------------------------------------
 # 🚌 主系統畫面 (驗證通過後顯示)
 # ---------------------------------------------------------
 
-# 側邊欄：顯示當前登入者帳號與登出按鈕
+# 側邊欄：顯示當前登入者資訊與登出按鈕
 with st.sidebar:
-    st.write(f"👤 當前使用者：**{st.session_state['username']}**")
+    st.write(f"👤 當前使用者：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
     if st.button("🚪 安全登出"):
         # 登出時更新日誌中的登出時間
         if st.session_state["log_id"] and supabase:
@@ -136,7 +165,8 @@ with st.sidebar:
                 pass
                 
         st.session_state["authenticated"] = False
-        st.session_state["username"] = ""
+        st.session_state["user_id"] = ""
+        st.session_state["user_name"] = ""
         st.session_state["log_id"] = None
         st.rerun()
 
