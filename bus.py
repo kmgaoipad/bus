@@ -1,10 +1,25 @@
 import os
 import pandas as pd
 import streamlit as st
+from datetime import datetime
+from supabase import create_client, Client
 from streamlit_qrcode_scanner import qrcode_scanner
 
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
+
+# 1. Supabase 連線設定 (可直接填入或透過 st.secrets 讀取)
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
+
+@st.cache_resource
+def init_supabase() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+try:
+    supabase = init_supabase()
+except Exception as e:
+    supabase = None
 
 # CSS 樣式設定
 st.markdown("""
@@ -53,7 +68,73 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 定義時段類別對應的 Excel 檔案與篩選規則
+# 初始化 Session State 登入狀態
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = ""
+if "log_id" not in st.session_state:
+    st.session_state["log_id"] = None
+
+# ---------------------------------------------------------
+# 🔒 登入驗證畫面 (未登入前無法存取系統)
+# ---------------------------------------------------------
+if not st.session_state["authenticated"]:
+    st.title("🔒 KMSH 校車驗證系統 - 使用者登入")
+    st.caption("請先輸入管理員核發之帳號密碼以開啟系統功能。")
+    
+    with st.form("login_form"):
+        email = st.text_input("帳號 (Email)").strip()
+        password = st.text_input("密碼", type="password").strip()
+        submit_button = st.form_submit_button("登入系統")
+        
+        if submit_button:
+            if not email or not password:
+                st.error("請輸入帳號與密碼！")
+            else:
+                try:
+                    # 使用 Supabase Auth 進行身份驗證
+                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_email"] = email
+                    
+                    # 紀錄登入時間至使用日誌 (usage_logs)
+                    log_res = supabase.table("usage_logs").insert({
+                        "user_email": email,
+                        "login_time": datetime.now().isoformat()
+                    }).execute()
+                    
+                    if log_res.data:
+                        st.session_state["log_id"] = log_res.data[0]["id"]
+                        
+                    st.success("✅ 驗證成功，正在進入系統...")
+                    st.rerun()
+                except Exception as e:
+                    st.error("❌ 登入失敗：帳號或密碼錯誤，請重新確認。")
+    st.stop()  # 未驗證通過前，直接中斷執行後續畫面
+
+# ---------------------------------------------------------
+# 🚌 主系統畫面 (驗證通過後顯示)
+# ---------------------------------------------------------
+
+# 側邊欄：顯示當前登入者資訊與登出按鈕
+with st.sidebar:
+    st.write(f"👤 當前使用者：**{st.session_state['user_email']}**")
+    if st.button("🚪 安全登出"):
+        # 登出時更新日誌中的登出時間
+        if st.session_state["log_id"] and supabase:
+            try:
+                supabase.table("usage_logs").update({
+                    "logout_time": datetime.now().isoformat()
+                }).eq("id", st.session_state["log_id"]).execute()
+            except Exception:
+                pass
+                
+        st.session_state["authenticated"] = False
+        st.session_state["user_email"] = ""
+        st.session_state["log_id"] = None
+        st.rerun()
+
 CATEGORY_CONFIG = {
     "上學": {"file": "上學各路線名單.xlsx", "filter": None},
     "大放學 (第1梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放1"},
@@ -69,7 +150,6 @@ CATEGORY_CONFIG = {
     "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
 }
 
-# 讀取指定類別 Excel 檔案並快取
 @st.cache_data
 def load_category_data(file_path, prefix_filter=None):
     if not os.path.exists(file_path):
@@ -78,7 +158,6 @@ def load_category_data(file_path, prefix_filter=None):
     xls = pd.ExcelFile(file_path)
     all_dfs = []
     
-    # 根據 prefix_filter 篩選要載入的工作表
     target_sheets = xls.sheet_names
     if prefix_filter:
         target_sheets = [s for s in xls.sheet_names if s.startswith(prefix_filter)]
@@ -97,30 +176,38 @@ def load_category_data(file_path, prefix_filter=None):
 
 st.title("🚌 KMSH校車驗證系統")
 
-# 1. 第一階層：選擇時段類別
+# 1. 選擇時段類別
 category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
 selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
 
 if selected_category == "-- 請選擇時段/類別 --":
-    st.warning("👈 請先選擇時段/類別（例如：上學、大放學 第1梯/第2梯...）。")
+    st.warning("👈 請先選擇時段/類別。")
 else:
     config = CATEGORY_CONFIG[selected_category]
     df, route_list = load_category_data(config["file"], config["filter"])
 
     if df is None:
-        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認該 Excel 檔已上傳至 GitHub！")
+        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認檔案已上傳！")
     else:
-        # 2. 第二階層：選擇該時段對應的路線
+        # 2. 選擇車輛路線
         route_options = ["-- 請點此選擇路線 --"] + list(route_list)
         selected_route = st.selectbox("2. 請選擇車輛路線：", route_options, index=0)
 
         if selected_route == "-- 請點此選擇路線 --":
             st.warning("👈 請選擇當前路線以開啟核對功能。")
         else:
-            # 顯示當前類別與路線提示
+            # 記錄當前選擇的路線至登入日誌
+            if st.session_state["log_id"] and supabase:
+                try:
+                    supabase.table("usage_logs").update({
+                        "route_selected": f"{selected_category} - {selected_route}"
+                    }).eq("id", st.session_state["log_id"]).execute()
+                except Exception:
+                    pass
+
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
-            # 3. 選擇驗證方式
+            # 3. 驗證方式選擇
             input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
 
             seat_no = ""
