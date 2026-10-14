@@ -8,7 +8,10 @@ from streamlit_qrcode_scanner import qrcode_scanner
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
-# 1. Supabase 連線設定 (可直接填入或透過 st.secrets 讀取)
+# 設定虛擬 Email 域名 (方便後端對接 Supabase Auth)
+DOMAIN = "@kmsh.edu.tw"
+
+# 1. Supabase 連線設定
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
 
@@ -71,36 +74,38 @@ st.markdown("""
 # 初始化 Session State 登入狀態
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
-if "user_email" not in st.session_state:
-    st.session_state["user_email"] = ""
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
 if "log_id" not in st.session_state:
     st.session_state["log_id"] = None
 
 # ---------------------------------------------------------
-# 🔒 登入驗證畫面 (未登入前無法存取系統)
+# 🔒 登入驗證畫面 (使用純使用者名稱)
 # ---------------------------------------------------------
 if not st.session_state["authenticated"]:
-    st.title("🔒 KMSH 校車驗證系統 - 使用者登入")
-    st.caption("請先輸入管理員核發之帳號密碼以開啟系統功能。")
+    st.title("🔒 KMSH 校車驗證系統 - 登入")
+    st.caption("請輸入管理員核發之使用者帳號與密碼。")
     
     with st.form("login_form"):
-        email = st.text_input("帳號 (Email)").strip()
+        username = st.text_input("使用者帳號", placeholder="例如：driver01 或 teacher_a").strip()
         password = st.text_input("密碼", type="password").strip()
         submit_button = st.form_submit_button("登入系統")
         
         if submit_button:
-            if not email or not password:
+            if not username or not password:
                 st.error("請輸入帳號與密碼！")
             else:
                 try:
-                    # 使用 Supabase Auth 進行身份驗證
-                    res = supabase.auth.sign_in_with_password({"email": email, "password": password})
+                    # 後端自動將 username 轉為完整的虛擬 Email 進行驗證
+                    auth_email = f"{username.lower()}{DOMAIN}" if "@" not in username else username
+                    res = supabase.auth.sign_in_with_password({"email": auth_email, "password": password})
+                    
                     st.session_state["authenticated"] = True
-                    st.session_state["user_email"] = email
+                    st.session_state["username"] = username
                     
                     # 紀錄登入時間至使用日誌 (usage_logs)
                     log_res = supabase.table("usage_logs").insert({
-                        "user_email": email,
+                        "user_email": username,  # 直接紀錄使用者自訂帳號
                         "login_time": datetime.now().isoformat()
                     }).execute()
                     
@@ -117,9 +122,9 @@ if not st.session_state["authenticated"]:
 # 🚌 主系統畫面 (驗證通過後顯示)
 # ---------------------------------------------------------
 
-# 側邊欄：顯示當前登入者資訊與登出按鈕
+# 側邊欄：顯示當前登入者帳號與登出按鈕
 with st.sidebar:
-    st.write(f"👤 當前使用者：**{st.session_state['user_email']}**")
+    st.write(f"👤 當前使用者：**{st.session_state['username']}**")
     if st.button("🚪 安全登出"):
         # 登出時更新日誌中的登出時間
         if st.session_state["log_id"] and supabase:
@@ -131,7 +136,7 @@ with st.sidebar:
                 pass
                 
         st.session_state["authenticated"] = False
-        st.session_state["user_email"] = ""
+        st.session_state["username"] = ""
         st.session_state["log_id"] = None
         st.rerun()
 
