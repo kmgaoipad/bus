@@ -8,10 +8,9 @@ from streamlit_qrcode_scanner import qrcode_scanner
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
-# 使用者名單與路線名單 Excel 檔案名稱
 USER_FILE = "校車驗證系統使用者名單.xlsx"
 
-# 1. Supabase 連線設定 (僅用於寫入使用紀錄 usage_logs)
+# 1. Supabase 連線設定
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
 
@@ -24,6 +23,15 @@ def init_supabase():
 
 supabase = init_supabase()
 
+# 整理班級座號字串（處理 float 自動補 .0 的問題）
+def clean_seat_number(val):
+    if pd.isna(val):
+        return ""
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
 # 讀取使用者名單 Excel
 @st.cache_data
 def load_users():
@@ -31,9 +39,8 @@ def load_users():
         return None
     try:
         df_users = pd.read_excel(USER_FILE)
-        # 清除字串前後空白
         for col in df_users.columns:
-            df_users[col] = df_users[col].astype(str).str.strip()
+            df_users[col] = df_users[col].apply(clean_seat_number)
         return df_users
     except Exception:
         return None
@@ -85,7 +92,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 初始化 Session State 登入狀態
+# 初始化 Session State
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "user_id" not in st.session_state:
@@ -96,7 +103,7 @@ if "log_id" not in st.session_state:
     st.session_state["log_id"] = None
 
 # ---------------------------------------------------------
-# 🔒 登入驗證畫面 (讀取 Excel 進行比對)
+# 🔒 登入驗證畫面
 # ---------------------------------------------------------
 if not st.session_state["authenticated"]:
     st.title("🔒 KMSH 校車驗證系統 - 登入")
@@ -105,7 +112,7 @@ if not st.session_state["authenticated"]:
     df_users = load_users()
     
     if df_users is None:
-        st.error(f"❌ 找不到使用者名單檔案 (`{USER_FILE}`)，請確認該 Excel 檔已上傳至 GitHub！")
+        st.error(f"❌ 找不到使用者名單檔案 (`{USER_FILE}`)，請確認檔案已上傳！")
         st.stop()
         
     with st.form("login_form"):
@@ -117,7 +124,6 @@ if not st.session_state["authenticated"]:
             if not user_input or not password_input:
                 st.error("請輸入帳號與密碼！")
             else:
-                # 比對「使用者編號」或「使用者姓名」，且「使用者密碼」需一致
                 matched_user = df_users[
                     ((df_users["使用者編號"] == user_input) | (df_users["使用者姓名"] == user_input)) & 
                     (df_users["使用者密碼"] == password_input)
@@ -129,7 +135,6 @@ if not st.session_state["authenticated"]:
                     st.session_state["user_id"] = str(user_info["使用者編號"])
                     st.session_state["user_name"] = str(user_info["使用者姓名"])
                     
-                    # 將登入紀錄寫入 Supabase usage_logs 資料表
                     if supabase:
                         try:
                             log_res = supabase.table("usage_logs").insert({
@@ -148,14 +153,12 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ---------------------------------------------------------
-# 🚌 主系統畫面 (驗證通過後顯示)
+# 🚌 主系統畫面
 # ---------------------------------------------------------
 
-# 側邊欄：顯示當前登入者資訊與登出按鈕
 with st.sidebar:
     st.write(f"👤 當前使用者：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
     if st.button("🚪 安全登出"):
-        # 登出時更新日誌中的登出時間
         if st.session_state["log_id"] and supabase:
             try:
                 supabase.table("usage_logs").update({
@@ -206,7 +209,10 @@ def load_category_data(file_path, prefix_filter=None):
         return None, None
         
     combined_df = pd.concat(all_dfs, ignore_index=True)
-    combined_df['班級座號'] = combined_df['班級座號'].astype(str).str.strip()
+    
+    # 統一清理「班級座號」格式，避免 .0 影響比對
+    combined_df['班級座號'] = combined_df['班級座號'].apply(clean_seat_number)
+    
     return combined_df, target_sheets
 
 st.title("🚌 KMSH校車驗證系統")
@@ -231,7 +237,7 @@ else:
         if selected_route == "-- 請點此選擇路線 --":
             st.warning("👈 請選擇當前路線以開啟核對功能。")
         else:
-            # 記錄當前選擇的路線至登入日誌
+            # 紀錄選擇路線至紀錄表
             if st.session_state["log_id"] and supabase:
                 try:
                     supabase.table("usage_logs").update({
@@ -250,9 +256,10 @@ else:
             if input_mode == "📷 鏡頭掃描":
                 qr_code_val = qrcode_scanner(key=f"bus_qr_scanner_{selected_category}_{selected_route}")
                 if qr_code_val:
-                    seat_no = str(qr_code_val).strip()
+                    seat_no = clean_seat_number(qr_code_val)
             else:
-                seat_no = st.text_input("輸入座號：", placeholder="例如：10337").strip()
+                raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
+                seat_no = clean_seat_number(raw_input)
 
             # 4. 進行驗證與結果顯示
             if seat_no:
@@ -263,8 +270,10 @@ else:
                     student_info = student_records.iloc[0]
                     actual_route = student_info['路線名稱']
                     student_name = student_info['學生姓名']
-                    station_name = student_info['放學站名']
-                    station_no = student_info['放學站號']
+                    
+                    # 相容「放學站名/上學站名」與「放學站號/上學站號」欄位
+                    station_name = student_info.get('放學站名') or student_info.get('上學站名') or "未設定"
+                    station_no = student_info.get('放學站號') or student_info.get('上學站號') or "未設定"
                     
                     if selected_route == actual_route:
                         st.success(f"✅ **准予上車！【{student_name}】**")
