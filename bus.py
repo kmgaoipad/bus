@@ -5,7 +5,7 @@ from streamlit_qrcode_scanner import qrcode_scanner
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
-# 適度優化間距，防止文字裁切
+# 適度優化間距與樣式
 st.markdown("""
     <style>
         /* 給予頂部足夠空間，避免標題被瀏覽器頂部裁切 */
@@ -26,9 +26,21 @@ st.markdown("""
         }
         /* 緊湊型的結果通知框與數據卡片 */
         .stAlert {
-            padding: 8px 12px !important;
-            margin-top: 0.4rem !important;
-            margin-bottom: 0.4rem !important;
+            padding: 6px 10px !important;
+            margin-top: 0.3rem !important;
+            margin-bottom: 0.3rem !important;
+        }
+        /* 特別縮小「當前路線」提示字體 */
+        .route-info {
+            font-size: 0.85rem !important;
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 4px;
+            padding: 4px 8px;
+            margin-bottom: 0.4rem;
+            display: inline-block;
+            width: 100%;
         }
         [data-testid="stMetric"] {
             background-color: #f8f9fa;
@@ -74,7 +86,8 @@ try:
     if selected_route == "-- 請點此選擇路線 --":
         st.warning("👈 請先選擇當前路線以開啟功能。")
     else:
-        st.success(f"📌 當前路線：**{selected_route}**")
+        # 使用縮小字體的獨立提示框
+        st.markdown(f'<div class="route-info">📌 當前路線：<b>{selected_route}</b></div>', unsafe_allow_html=True)
 
         # 2. 輸入模式選擇
         input_mode = st.radio("2. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
