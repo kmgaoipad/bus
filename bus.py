@@ -1,10 +1,7 @@
 import os
-import io
-import cv2
-import numpy as np
 import pandas as pd
 import streamlit as st
-from PIL import Image
+import streamlit.components.v1 as components
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -33,43 +30,11 @@ def clean_seat_number(val):
     if val is None:
         return ""
     val_str = str(val).strip()
-    if pd.isna(val) or "DeltaGenerator" in val_str:
+    if pd.isna(val) or "DeltaGenerator" in val_str or "object at" in val_str:
         return ""
     if val_str.endswith('.0'):
         val_str = val_str[:-2]
     return val_str
-
-# 使用 OpenCV 原生 QRCodeDetector 解析照片中的 QR Code 內容 (不需 zbar)
-def decode_qr_from_image(image_bytes):
-    try:
-        image = Image.open(io.BytesIO(image_bytes))
-        img_np = np.array(image.convert('RGB'))
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        
-        # 使用 OpenCV 內建 QRCodeDetector
-        qr_detector = cv2.QRCodeDetector()
-        
-        # 1. 直接檢測與解碼
-        data, bbox, _ = qr_detector.detectAndDecode(gray)
-        if data:
-            return data.strip()
-            
-        # 2. 備用方案：提高對比度再試一次（針對亮光/陰影優化）
-        enhanced = cv2.equalizeHist(gray)
-        data_enh, _, _ = qr_detector.detectAndDecode(enhanced)
-        if data_enh:
-            return data_enh.strip()
-
-        # 3. 多重 QR Code 解碼嘗試
-        retval, decoded_info, _, _ = qr_detector.detectAndDecodeMulti(gray)
-        if retval and decoded_info:
-            for d in decoded_info:
-                if d.strip():
-                    return d.strip()
-
-    except Exception:
-        pass
-    return ""
 
 # 讀取使用者名單 Excel
 @st.cache_data
@@ -83,6 +48,102 @@ def load_users():
         return df_users
     except Exception:
         return None
+
+# 原生 JS 實時自動動態掃描元件 (無需按 Take Photo)
+def real_time_auto_qr_scanner(key="live_qr_scanner"):
+    scanner_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+        <style>
+            #container {{
+                position: relative;
+                width: 100%;
+                max-width: 320px;
+                margin: 0 auto;
+                text-align: center;
+            }}
+            #video {{
+                width: 100%;
+                height: 220px;
+                object-fit: cover;
+                border-radius: 8px;
+                border: 2px solid #007bff;
+            }}
+            #canvas {{
+                display: none;
+            }}
+            .scan-line {{
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 2px;
+                background: #00ff00;
+                box-shadow: 0 0 8px #00ff00;
+                animation: scan 2s infinite linear;
+            }}
+            @keyframes scan {{
+                0% {{ top: 0%; }}
+                50% {{ top: 95%; }}
+                100% {{ top: 0%; }}
+            }}
+        </style>
+    </head>
+    <body style="margin:0; padding:0; background:transparent;">
+        <div id="container">
+            <video id="video" playsinline></video>
+            <div class="scan-line"></div>
+            <canvas id="canvas"></canvas>
+        </div>
+        <script>
+            const video = document.getElementById("video");
+            const canvas = document.getElementById("canvas");
+            const ctx = canvas.getContext("2d");
+            let isScanning = true;
+
+            // 存取手機/電腦原生的後置攝影鏡頭
+            navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: "environment" }} }})
+            .then(function(stream) {{
+                video.srcObject = stream;
+                video.setAttribute("playsinline", true);
+                video.play();
+                requestAnimationFrame(tick);
+            }}).catch(function(err) {{
+                console.error("Camera Access Error: ", err);
+            }});
+
+            function tick() {{
+                if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {{
+                    canvas.height = video.videoHeight;
+                    canvas.width = video.videoWidth;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    
+                    // jsQR 自動辨識
+                    var code = jsQR(imageData.data, imageData.width, imageData.height, {{
+                        inversionAttempts: "dontInvert",
+                    }});
+
+                    if (code && code.data && code.data.trim() !== "") {{
+                        let seatNo = code.data.trim();
+                        // 抓取到座號後，即刻將數值傳回 Streamlit，無須點擊任何按鈕
+                        window.parent.postMessage({{
+                            type: "streamlit:setComponentValue",
+                            value: seatNo
+                        }}, "*");
+                    }}
+                }}
+                if (isScanning) {{
+                    requestAnimationFrame(tick);
+                }}
+            }}
+        </script>
+    </body>
+    </html>
+    """
+    return components.html(scanner_html, height=230)
 
 # CSS 樣式設定
 st.markdown("""
@@ -282,20 +343,14 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭拍攝/掃描", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時自動掃描", "⌨️ 手動輸入"], horizontal=True)
 
             seat_no = ""
 
-            if input_mode == "📷 鏡頭拍攝/掃描":
-                camera_img = st.camera_input("對準 QR Code 拍攝：", key=f"cam_{selected_category}_{selected_route}")
-                if camera_img is not None:
-                    bytes_data = camera_img.getvalue()
-                    decoded_code = decode_qr_from_image(bytes_data)
-                    if decoded_code:
-                        seat_no = clean_seat_number(decoded_code)
-                        st.info(f"📲 辨識成功，讀取座號：**{seat_no}**")
-                    else:
-                        st.warning("⚠️ 未能辨識出清晰的 QR Code，請對準並重新拍攝。")
+            if input_mode == "📷 鏡頭即時自動掃描":
+                # 開啟即時動態掃描視窗 (對準即自動觸發)
+                raw_code = real_time_auto_qr_scanner(key=f"scanner_{selected_category}_{selected_route}")
+                seat_no = clean_seat_number(raw_code)
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 seat_no = clean_seat_number(raw_input)
