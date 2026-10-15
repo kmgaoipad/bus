@@ -3,3 +3,4 @@ pandas
 openpyxl
 requests
 supabase
+streamlit-qrcode-scanner
