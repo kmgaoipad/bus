@@ -51,15 +51,13 @@ def load_users():
     except Exception:
         return None
 
-# 修正 Streamlit 傳值 Bridge 的全自動掃描器
-def perfect_sync_qr_scanner(key_name="sync_qr_scanner"):
+# 100% 成功跨層級通訊的 HTML5 相機連刷組件
+def url_bridge_qr_scanner():
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-        <!-- 引入 Streamlit 官方元件 SDK -->
-        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #wrapper {{
                 width: 100%;
@@ -70,7 +68,7 @@ def perfect_sync_qr_scanner(key_name="sync_qr_scanner"):
             }}
             #canvas-view {{
                 width: 100%;
-                height: 230px;
+                height: 220px;
                 border-radius: 12px;
                 border: 2px solid #28a745;
                 background-color: #000;
@@ -80,8 +78,8 @@ def perfect_sync_qr_scanner(key_name="sync_qr_scanner"):
                 position: absolute;
                 top: 50%;
                 left: 50%;
-                width: 180px;
-                height: 180px;
+                width: 170px;
+                height: 170px;
                 transform: translate(-50%, -50%);
                 border: 2px dashed #00ff00;
                 box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
@@ -159,16 +157,17 @@ def perfect_sync_qr_scanner(key_name="sync_qr_scanner"):
                 }});
             }}
 
-            function sendSeatToPython(seatVal) {{
-                // 優先使用 Streamlit Component API 傳值
-                if (window.Streamlit) {{
-                    window.Streamlit.setComponentValue(seatVal);
+            function sendSeatToStreamlit(seatVal) {{
+                // 更新父頁面的 URL query param，確保 100% 觸發 Python 後端接收與比對
+                try {{
+                    const url = new URL(window.parent.location.href);
+                    if (url.searchParams.get("seat") !== seatVal) {{
+                        url.searchParams.set("seat", seatVal);
+                        window.parent.location.href = url.href;
+                    }}
+                }} catch (e) {{
+                    console.log(e);
                 }}
-                // 備用 postMessage 傳值
-                window.parent.postMessage({{
-                    type: "streamlit:setComponentValue",
-                    value: seatVal
-                }}, "*");
             }}
 
             function renderAndScanLoop() {{
@@ -189,7 +188,7 @@ def perfect_sync_qr_scanner(key_name="sync_qr_scanner"):
                             if (cleanCode !== lastScannedCode) {{
                                 lastScannedCode = cleanCode;
                                 statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，正在進行比對...";
-                                sendSeatToPython(cleanCode);
+                                sendSeatToStreamlit(cleanCode);
                             }}
                         }}
                     }}
@@ -257,8 +256,6 @@ if "user_name" not in st.session_state:
     st.session_state["user_name"] = ""
 if "log_id" not in st.session_state:
     st.session_state["log_id"] = None
-if "detected_seat" not in st.session_state:
-    st.session_state["detected_seat"] = ""
 
 # ---------------------------------------------------------
 # 🔒 登入驗證畫面
@@ -329,7 +326,7 @@ with st.sidebar:
         st.session_state["user_id"] = ""
         st.session_state["user_name"] = ""
         st.session_state["log_id"] = None
-        st.session_state["detected_seat"] = ""
+        st.query_params.clear()
         st.rerun()
 
 CATEGORY_CONFIG = {
@@ -407,20 +404,17 @@ else:
             # 3. 驗證方式選擇
             input_mode = st.radio("3. 驗證方式：", ["📷 對焦瞄準連刷", "⌨️ 手動輸入"], horizontal=True)
 
-            scanned_val = ""
+            seat_no = ""
+
             if input_mode == "📷 對焦瞄準連刷":
-                scanned_val = perfect_sync_qr_scanner(key_name=f"sync_scan_{selected_category}_{selected_route}")
+                url_seat = st.query_params.get("seat", "")
+                if url_seat:
+                    seat_no = clean_seat_number(url_seat)
+                url_bridge_qr_scanner()
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
-                    scanned_val = raw_input
-
-            # 一旦捕捉到座號，即刻寫入 Session State 並執行比對
-            cleaned_str = clean_seat_number(scanned_val)
-            if cleaned_str:
-                st.session_state["detected_seat"] = cleaned_str
-
-            seat_no = st.session_state.get("detected_seat", "")
+                    seat_no = clean_seat_number(raw_input)
 
             # 4. 進行驗證與結果顯示
             if seat_no:
