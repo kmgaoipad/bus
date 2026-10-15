@@ -1,9 +1,9 @@
 import os
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 from datetime import datetime
 from supabase import create_client, Client
+from streamlit_qrcode_scanner import qrcode_scanner
 
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
@@ -11,13 +11,11 @@ st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout
 USER_FILE = "校車驗證系統使用者名單.xlsx"
 
 # 1. Supabase 連線設定
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
 
 @st.cache_resource
 def init_supabase():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return None
     try:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
@@ -25,18 +23,19 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 安全整理班級座號字串
+# 整理班級座號字串（處理 float 自動補 .0 的問題）
 def clean_seat_number(val):
     if val is None:
         return ""
-    if not isinstance(val, (str, int, float)):
-        return ""
-    val_str = str(val).strip()
-    if not val_str or "DeltaGenerator" in val_str or "object at" in val_str:
-        return ""
-    if val_str.endswith('.0'):
-        val_str = val_str[:-2]
-    return val_str
+    try:
+        if pd.isna(val):
+            return ""
+    except Exception:
+        pass
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
 
 # 讀取使用者名單 Excel
 @st.cache_data
@@ -51,66 +50,11 @@ def load_users():
     except Exception:
         return None
 
-# 高穩定度即時自動掃描組件 (100% 畫面顯示 + 掃到即自動判斷)
-def stable_auto_qr_scanner(key_name="auto_qr_scanner"):
-    scanner_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-        <style>
-            #reader {{
-                width: 100%;
-                max-width: 320px;
-                margin: 0 auto;
-                border-radius: 8px;
-                overflow: hidden;
-                border: 2px solid #007bff;
-            }}
-            #reader video {{
-                object-fit: cover !important;
-                width: 100% !important;
-                height: 220px !important;
-            }}
-        </style>
-    </head>
-    <body style="margin:0; padding:0; background:transparent; text-align:center;">
-        <div id="reader"></div>
-        <script>
-            function sendToStreamlit(val) {{
-                let cleanVal = String(val).trim();
-                if (cleanVal) {{
-                    window.parent.postMessage({{
-                        type: "streamlit:setComponentValue",
-                        value: cleanVal
-                    }}, "*");
-                }}
-            }}
-
-            const html5QrCode = new Html5Qrcode("reader");
-            const config = {{ fps: 15, qrbox: {{ width: 200, height: 200 }} }};
-
-            // 優先嘗試後置相機 (environment)，若失敗則調用預設相機
-            html5QrCode.start({{ facingMode: "environment" }}, config, (decodedText, decodedResult) => {{
-                sendToStreamlit(decodedText);
-            }}).catch(err => {{
-                html5QrCode.start({{ facingMode: "user" }}, config, (decodedText, decodedResult) => {{
-                    sendToStreamlit(decodedText);
-                }}).catch(err2 => {{
-                    console.error("Camera Error: ", err2);
-                }});
-            }});
-        </script>
-    </body>
-    </html>
-    """
-    return components.html(scanner_html, height=240)
-
 # CSS 樣式設定
 st.markdown("""
     <style>
         .block-container {
-            padding-top: 1.5rem !important;
+            padding-top: 2rem !important;
             padding-bottom: 1.5rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
@@ -118,6 +62,9 @@ st.markdown("""
         h1 {
             font-size: 1.4rem !important;
             margin-bottom: 0.3rem !important;
+        }
+        iframe[title*="qrcode_scanner"] {
+            max-height: 220px !important;
         }
         .stAlert {
             padding: 8px 12px !important;
@@ -159,6 +106,8 @@ if "user_name" not in st.session_state:
     st.session_state["user_name"] = ""
 if "log_id" not in st.session_state:
     st.session_state["log_id"] = None
+if "detected_seat" not in st.session_state:
+    st.session_state["detected_seat"] = ""
 
 # ---------------------------------------------------------
 # 🔒 登入驗證畫面
@@ -229,6 +178,7 @@ with st.sidebar:
         st.session_state["user_id"] = ""
         st.session_state["user_name"] = ""
         st.session_state["log_id"] = None
+        st.session_state["detected_seat"] = ""
         st.rerun()
 
 CATEGORY_CONFIG = {
@@ -304,21 +254,26 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時自動掃描", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
 
-            seat_no = ""
-
-            if input_mode == "📷 鏡頭即時自動掃描":
-                raw_code = stable_auto_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
-                seat_no = clean_seat_number(raw_code)
+            if input_mode == "📷 鏡頭掃描":
+                # 呼叫 qrcode_scanner 掃描器
+                qr_val = qrcode_scanner(key=f"qr_sc_{selected_category}_{selected_route}")
+                if qr_val:
+                    cleaned_qr = clean_seat_number(qr_val)
+                    if cleaned_qr:
+                        st.session_state["detected_seat"] = cleaned_qr
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
-                seat_no = clean_seat_number(raw_input)
+                if raw_input:
+                    st.session_state["detected_seat"] = clean_seat_number(raw_input)
+
+            seat_no = st.session_state.get("detected_seat", "")
 
             # 4. 進行驗證與結果顯示
             if seat_no:
-                student_records = df[df['班級座號'] == seat_no]
                 st.divider()
+                student_records = df[df['班級座號'] == seat_no]
                 
                 if not student_records.empty:
                     student_info = student_records.iloc[0]
@@ -339,3 +294,8 @@ else:
                         st.warning(f"⚠️ 應搭乘：**【{actual_route}】** ｜ 站名：{station_name} ({station_no})")
                 else:
                     st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
+
+                # 提供重新掃描按鈕
+                if st.button("🔄 掃描/驗證下一位"):
+                    st.session_state["detected_seat"] = ""
+                    st.rerun()
