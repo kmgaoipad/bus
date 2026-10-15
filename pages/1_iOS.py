@@ -47,8 +47,8 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# iOS Canvas 繪製專用相機元件 (官方 Bridge 傳值模式)
-def ios_canvas_scanner(key=None):
+# iOS Canvas 繪製專用相機元件 (修正 key 參數命名)
+def ios_canvas_scanner(key_name=None):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
@@ -150,7 +150,7 @@ def ios_canvas_scanner(key=None):
     </body>
     </html>
     """
-    return components.html(scanner_html, height=290, key=key)
+    return components.html(scanner_html, height=290, key=key_name)
 
 CATEGORY_CONFIG = {
     "上學": {"file": "上學各路線名單.xlsx", "filter": None},
@@ -220,7 +220,7 @@ else:
 
             seat_no = ""
             if input_mode == "📷 iPhone 相機對焦連刷":
-                scanned_val = ios_canvas_scanner(key=f"ios_cam_{selected_category}_{selected_route}")
+                scanned_val = ios_canvas_scanner(key_name=f"ios_cam_{selected_category}_{selected_route}")
                 if scanned_val:
                     seat_no = clean_seat_number(scanned_val)
             else:
