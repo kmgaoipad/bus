@@ -3,4 +3,6 @@ pandas
 openpyxl
 requests
 supabase
-streamlit-qrcode-scanner
+opencv-python-headless
+pyzbar
+pillow
