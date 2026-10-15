@@ -168,7 +168,7 @@ if not st.session_state["authenticated"]:
     df_users = load_users()
     
     with st.form("login_form"):
-        user_input = st.text_input("使用者編號 (或帳號)", placeholder="例如：user1 或 kmsh").strip()
+        user_input = st.text_input("使用者編號 (或帳號)").strip()
         password_input = st.text_input("密碼", type="password").strip()
         submit_button = st.form_submit_button("登入系統")
         
