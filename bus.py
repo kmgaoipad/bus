@@ -1,7 +1,11 @@
 import os
+import io
+import cv2
+import numpy as np
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
+from PIL import Image
+from pyzbar.pyzbar import decode
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -11,11 +15,13 @@ st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout
 USER_FILE = "校車驗證系統使用者名單.xlsx"
 
 # 1. Supabase 連線設定
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 
 @st.cache_resource
 def init_supabase():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
     try:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
@@ -23,22 +29,40 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 安全整理班級座號字串（容錯處理，避免 DeltaGenerator 物件傳入）
+# 清理班級座號字串
 def clean_seat_number(val):
     if val is None:
         return ""
-    # 若傳入的是 Streamlit 物件而非字串/數字，直接過濾掉
     val_str = str(val).strip()
-    if "DeltaGenerator" in val_str or "object at" in val_str:
+    if pd.isna(val) or "DeltaGenerator" in val_str:
         return ""
-    try:
-        if pd.isna(val):
-            return ""
-    except Exception:
-        pass
     if val_str.endswith('.0'):
         val_str = val_str[:-2]
     return val_str
+
+# 解析照片中的 QR Code 內容
+def decode_qr_from_image(image_bytes):
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        # 轉為 OpenCV 格式進行多元解碼
+        img_np = np.array(image.convert('RGB'))
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        # 1. 使用 PyZbar 解碼
+        decoded_objects = decode(gray)
+        for obj in decoded_objects:
+            qr_data = obj.data.decode('utf-8').strip()
+            if qr_data:
+                return qr_data
+                
+        # 2. 備用：使用 OpenCV QRCodeDetector 解碼
+        qr_detector = cv2.QRCodeDetector()
+        data, bbox, _ = qr_detector.detectAndDecode(gray)
+        if data:
+            return data.strip()
+    except Exception:
+        pass
+    return ""
 
 # 讀取使用者名單 Excel
 @st.cache_data
@@ -52,59 +76,6 @@ def load_users():
         return df_users
     except Exception:
         return None
-
-# 相容 Android & iOS 的純 HTML5/JS 鏡頭掃描器
-def universal_qr_scanner(key_name="qr_scanner"):
-    scanner_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-        <style>
-            #reader {{
-                width: 100%;
-                max-width: 320px;
-                margin: 0 auto;
-                border-radius: 8px;
-                overflow: hidden;
-            }}
-            #reader__scan_region video {{
-                object-fit: cover !important;
-                max-height: 200px !important;
-            }}
-            #reader__dashboard {{
-                padding: 4px !important;
-            }}
-        </style>
-    </head>
-    <body style="margin:0; padding:0; text-align:center;">
-        <div id="reader"></div>
-        <script>
-            function onScanSuccess(decodedText, decodedResult) {{
-                let seatNo = String(decodedText).trim();
-                if (seatNo && !seatNo.includes("DeltaGenerator")) {{
-                    window.parent.postMessage({{
-                        type: "streamlit:setComponentValue",
-                        value: seatNo
-                    }}, "*");
-                }}
-            }}
-
-            let html5QrcodeScanner = new Html5QrcodeScanner(
-                "reader", 
-                {{ 
-                    fps: 10, 
-                    qrbox: {{width: 180, height: 180}},
-                    facingMode: "environment"
-                }},
-                false
-            );
-            html5QrcodeScanner.render(onScanSuccess);
-        </script>
-    </body>
-    </html>
-    """
-    return components.html(scanner_code, height=250)
 
 # CSS 樣式設定
 st.markdown("""
@@ -304,13 +275,21 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭拍攝/掃描", "⌨️ 手動輸入"], horizontal=True)
 
             seat_no = ""
 
-            if input_mode == "📷 鏡頭掃描":
-                qr_code_val = universal_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
-                seat_no = clean_seat_number(qr_code_val)
+            if input_mode == "📷 鏡頭拍攝/掃描":
+                # 使用 Streamlit 原生穩定相機（支援 Android / iOS 手機原生權限）
+                camera_img = st.camera_input("對準 QR Code 拍攝：", key=f"cam_{selected_category}_{selected_route}")
+                if camera_img is not None:
+                    bytes_data = camera_img.getvalue()
+                    decoded_code = decode_qr_from_image(bytes_data)
+                    if decoded_code:
+                        seat_no = clean_seat_number(decoded_code)
+                        st.info(f"📲 辨識成功，讀取座號：**{seat_no}**")
+                    else:
+                        st.warning("⚠️ 未能辨識出清晰的 QR Code，請對準並重新拍攝。")
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 seat_no = clean_seat_number(raw_input)
