@@ -1,9 +1,12 @@
 import os
+import io
 import pandas as pd
 import streamlit as st
+from PIL import Image
+import cv2
+import numpy as np
 from datetime import datetime
 from supabase import create_client, Client
-from streamlit_qrcode_scanner import qrcode_scanner
 
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
@@ -23,7 +26,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 整理班級座號字串（處理 float 自動補 .0 的問題）
+# 安全整理班級座號字串
 def clean_seat_number(val):
     if val is None:
         return ""
@@ -36,6 +39,27 @@ def clean_seat_number(val):
     if s.endswith('.0'):
         s = s[:-2]
     return s
+
+# 原生圖片/相片解碼 QR Code (100% 支援 Android 手機相機)
+def decode_qr_image(img_file):
+    try:
+        image = Image.open(img_file)
+        img_np = np.array(image.convert('RGB'))
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+        
+        qr_detector = cv2.QRCodeDetector()
+        data, bbox, _ = qr_detector.detectAndDecode(gray)
+        if data:
+            return data.strip()
+            
+        # 提高對比度再試一次（針對亮光/陰影）
+        enhanced = cv2.equalizeHist(gray)
+        data_enh, _, _ = qr_detector.detectAndDecode(enhanced)
+        if data_enh:
+            return data_enh.strip()
+    except Exception:
+        pass
+    return ""
 
 # 讀取使用者名單 Excel
 @st.cache_data
@@ -62,9 +86,6 @@ st.markdown("""
         h1 {
             font-size: 1.4rem !important;
             margin-bottom: 0.3rem !important;
-        }
-        iframe[title*="qrcode_scanner"] {
-            max-height: 220px !important;
         }
         .stAlert {
             padding: 8px 12px !important;
@@ -254,15 +275,17 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 拍攝/選擇QR Code相片", "⌨️ 手動輸入"], horizontal=True)
 
-            if input_mode == "📷 鏡頭掃描":
-                # 呼叫 qrcode_scanner 掃描器
-                qr_val = qrcode_scanner(key=f"qr_sc_{selected_category}_{selected_route}")
-                if qr_val:
-                    cleaned_qr = clean_seat_number(qr_val)
-                    if cleaned_qr:
-                        st.session_state["detected_seat"] = cleaned_qr
+            if input_mode == "📷 拍攝/選擇QR Code相片":
+                # Android / iOS 100% 呼叫原生相機 App 拍攝或上傳
+                camera_file = st.file_uploader("點擊拍攝或開啟照片：", type=["jpg", "png", "jpeg"], key=f"uploader_{selected_category}_{selected_route}")
+                if camera_file is not None:
+                    decoded = decode_qr_image(camera_file)
+                    if decoded:
+                        st.session_state["detected_seat"] = clean_seat_number(decoded)
+                    else:
+                        st.warning("⚠️ 照片未辨識出清晰的 QR Code，請重試或改用手動輸入。")
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
@@ -295,7 +318,6 @@ else:
                 else:
                     st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
 
-                # 提供重新掃描按鈕
-                if st.button("🔄 掃描/驗證下一位"):
+                if st.button("🔄 驗證下一位"):
                     st.session_state["detected_seat"] = ""
                     st.rerun()
