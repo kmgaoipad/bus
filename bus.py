@@ -5,6 +5,7 @@ from datetime import datetime
 from supabase import create_client, Client
 from streamlit_qrcode_scanner import qrcode_scanner
 
+# 隱藏左側邊欄
 st.markdown("""
     <style>
         [data-testid="stSidebar"] {
@@ -13,12 +14,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-
-
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
 USER_FILE = "校車驗證系統使用者名單.xlsx"
+
+# 管理者預設帳密
+ADMIN_USER = "kmsh"
+ADMIN_PASS = "kmsh"
 
 # 1. Supabase 連線設定
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
@@ -105,6 +108,8 @@ st.markdown("""
 # 初始化 Session State
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
+if "is_admin" not in st.session_state:
+    st.session_state["is_admin"] = False
 if "user_id" not in st.session_state:
     st.session_state["user_id"] = ""
 if "user_name" not in st.session_state:
@@ -117,16 +122,12 @@ if "log_id" not in st.session_state:
 # ---------------------------------------------------------
 if not st.session_state["authenticated"]:
     st.title("🔒 KMSH 校車驗證系統 - 登入")
-    st.caption("請輸入使用者編號與密碼。")
+    st.caption("請輸入使用者編號與密碼，或管理者帳密。")
     
     df_users = load_users()
     
-    if df_users is None:
-        st.error(f"❌ 找不到使用者名單檔案 (`{USER_FILE}`)，請確認檔案已上傳！")
-        st.stop()
-        
     with st.form("login_form"):
-        user_input = st.text_input("使用者編號 (或姓名)", placeholder="例如：user1").strip()
+        user_input = st.text_input("使用者編號 (或帳號)", placeholder="例如：user1 或 kmsh").strip()
         password_input = st.text_input("密碼", type="password").strip()
         submit_button = st.form_submit_button("登入系統")
         
@@ -134,36 +135,154 @@ if not st.session_state["authenticated"]:
             if not user_input or not password_input:
                 st.error("請輸入帳號與密碼！")
             else:
-                matched_user = df_users[
-                    ((df_users["使用者編號"] == user_input) | (df_users["使用者姓名"] == user_input)) & 
-                    (df_users["使用者密碼"] == password_input)
-                ]
-                
-                if not matched_user.empty:
-                    user_info = matched_user.iloc[0]
+                # 1. 檢查是否為管理者登入 (kmsh / kmsh)
+                if user_input == ADMIN_USER and password_input == ADMIN_PASS:
                     st.session_state["authenticated"] = True
-                    st.session_state["user_id"] = str(user_info["使用者編號"])
-                    st.session_state["user_name"] = str(user_info["使用者姓名"])
-                    
-                    if supabase:
-                        try:
-                            log_res = supabase.table("usage_logs").insert({
-                                "user_email": f"{st.session_state['user_id']} ({st.session_state['user_name']})",
-                                "login_time": datetime.now().isoformat()
-                            }).execute()
-                            if log_res.data:
-                                st.session_state["log_id"] = log_res.data[0]["id"]
-                        except Exception:
-                            pass
-                            
-                    st.success(f"✅ 歡迎 {st.session_state['user_name']}，正在進入系統...")
+                    st.session_state["is_admin"] = True
+                    st.session_state["user_id"] = ADMIN_USER
+                    st.session_state["user_name"] = "系統管理者"
+                    st.success("✅ 管理者登入成功！")
                     st.rerun()
+                
+                # 2. 檢查一般使用者登入 (比對 Excel 名單)
+                elif df_users is not None:
+                    matched_user = df_users[
+                        ((df_users["使用者編號"] == user_input) | (df_users["使用者姓名"] == user_input)) & 
+                        (df_users["使用者密碼"] == password_input)
+                    ]
+                    
+                    if not matched_user.empty:
+                        user_info = matched_user.iloc[0]
+                        st.session_state["authenticated"] = True
+                        st.session_state["is_admin"] = False
+                        st.session_state["user_id"] = str(user_info["使用者編號"])
+                        st.session_state["user_name"] = str(user_info["使用者姓名"])
+                        
+                        # 紀錄使用者登入至 Supabase
+                        if supabase:
+                            try:
+                                log_res = supabase.table("usage_logs").insert({
+                                    "user_email": f"{st.session_state['user_id']} ({st.session_state['user_name']})",
+                                    "login_time": datetime.now().isoformat()
+                                }).execute()
+                                if log_res.data:
+                                    st.session_state["log_id"] = log_res.data[0]["id"]
+                            except Exception:
+                                pass
+                                
+                        st.success(f"✅ 歡迎 {st.session_state['user_name']}，正在進入系統...")
+                        st.rerun()
+                    else:
+                        st.error("❌ 登入失敗：使用者編號或密碼錯誤。")
                 else:
-                    st.error("❌ 登入失敗：使用者編號或密碼錯誤，請重新確認。")
+                    st.error(f"❌ 找不到使用者名單檔案 (`{USER_FILE}`)，且非管理者帳號！")
     st.stop()
 
 # ---------------------------------------------------------
-# 🚌 主系統畫面
+# 🛠️ 管理者畫面 (當 is_admin 為 True 時)
+# ---------------------------------------------------------
+if st.session_state["is_admin"]:
+    st.title("🛠️ 管理者後台 - 登入記錄管理")
+    
+    col_admin_info, col_logout = st.columns([3, 1])
+    with col_admin_info:
+        st.write(f"👤 當前身分：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
+    with col_logout:
+        if st.button("🚪 安全登出", type="secondary"):
+            st.session_state["authenticated"] = False
+            st.session_state["is_admin"] = False
+            st.session_state["user_id"] = ""
+            st.session_state["user_name"] = ""
+            st.rerun()
+            
+    st.divider()
+
+    if not supabase:
+        st.error("❌ 未設定或無法連線至 Supabase 資料庫，無法讀取記錄。")
+        st.stop()
+
+    try:
+        response = supabase.table("usage_logs").select("*").order("id", desc=True).execute()
+        records = response.data
+    except Exception as e:
+        st.error(f"讀取記錄失敗：{e}")
+        st.stop()
+
+    if not records:
+        st.info("目前尚無任何登入記錄。")
+        st.stop()
+
+    st.subheader(f"📋 登入紀錄列表（共 {len(records)} 筆）")
+
+    # 1. 一鍵刪除全部記錄
+    if st.button("🗑️ 刪除全部記錄", type="primary"):
+        try:
+            all_ids = [r["id"] for r in records]
+            supabase.table("usage_logs").delete().in_("id", all_ids).execute()
+            st.success("已成功清空所有登入記錄！")
+            st.rerun()
+        except Exception as e:
+            st.error(f"刪除失敗：{e}")
+
+    st.write("")
+
+    # 2. 勾選多筆/單筆刪除表單
+    with st.form("delete_form"):
+        selected_ids = []
+        
+        # 標題列
+        h1, h2, h3, h4, h5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
+        h1.write("**選取**")
+        h2.write("**使用者資訊**")
+        h3.write("**登入時間**")
+        h4.write("**選擇路線**")
+        h5.write("**操作**")
+        st.divider()
+
+        # 逐筆顯示資料列
+        for row in records:
+            c1, c2, c3, c4, c5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
+            
+            # 多選框
+            if c1.checkbox("", key=f"chk_{row['id']}"):
+                selected_ids.append(row["id"])
+                
+            c2.write(row.get("user_email", "未知"))
+            
+            # 時間格式整理
+            raw_time = row.get("login_time", "無記錄")
+            formatted_time = raw_time.replace("T", " ")[:19] if raw_time else "無紀錄"
+            c3.write(formatted_time)
+            
+            c4.write(row.get("route_selected", "未選擇"))
+            
+            # 單筆刪除按鈕
+            if c5.form_submit_button("❌ 刪除"):
+                try:
+                    supabase.table("usage_logs").delete().eq("id", row["id"]).execute()
+                    st.success(f"已刪除 ID: {row['id']} 的記錄")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"刪除失敗：{e}")
+
+        st.divider()
+        # 批次/部份刪除按鈕
+        submit_batch = st.form_submit_button("🗑️ 刪除勾選項目（部份刪除）")
+        if submit_batch:
+            if selected_ids:
+                try:
+                    supabase.table("usage_logs").delete().in_("id", selected_ids).execute()
+                    st.success(f"已成功刪除 {len(selected_ids)} 筆記錄！")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"刪除失敗：{e}")
+            else:
+                st.warning("⚠️ 請先勾選要刪除的記錄。")
+
+    st.stop()
+
+# ---------------------------------------------------------
+# 🚌 一般使用者：主系統畫面
 # ---------------------------------------------------------
 
 with st.sidebar:
@@ -178,6 +297,7 @@ with st.sidebar:
                 pass
                 
         st.session_state["authenticated"] = False
+        st.session_state["is_admin"] = False
         st.session_state["user_id"] = ""
         st.session_state["user_name"] = ""
         st.session_state["log_id"] = None
