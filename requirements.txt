@@ -1,5 +1,8 @@
 streamlit
 pandas
 openpyxl
-streamlit-qrcode-scanner
 supabase
+streamlit-qrcode-scanner
+streamlit-camera-input-live
+zbarlight
+pillow

@@ -23,19 +23,22 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 安全整理班級座號字串（容錯處理）
+# 安全整理班級座號字串（容錯處理，避免 DeltaGenerator 物件傳入）
 def clean_seat_number(val):
     if val is None:
+        return ""
+    # 若傳入的是 Streamlit 物件而非字串/數字，直接過濾掉
+    val_str = str(val).strip()
+    if "DeltaGenerator" in val_str or "object at" in val_str:
         return ""
     try:
         if pd.isna(val):
             return ""
     except Exception:
         pass
-    s = str(val).strip()
-    if s.endswith('.0'):
-        s = s[:-2]
-    return s
+    if val_str.endswith('.0'):
+        val_str = val_str[:-2]
+    return val_str
 
 # 讀取使用者名單 Excel
 @st.cache_data
@@ -50,9 +53,9 @@ def load_users():
     except Exception:
         return None
 
-# 相容 Android & iOS 的跨平台 QR Code 掃描器組件
-def android_compatible_qr_scanner(key="qr_scanner"):
-    scanner_html = f"""
+# 相容 Android & iOS 的純 HTML5/JS 鏡頭掃描器
+def universal_qr_scanner(key_name="qr_scanner"):
+    scanner_code = f"""
     <!DOCTYPE html>
     <html>
     <head>
@@ -60,14 +63,17 @@ def android_compatible_qr_scanner(key="qr_scanner"):
         <style>
             #reader {{
                 width: 100%;
-                max-width: 360px;
+                max-width: 320px;
                 margin: 0 auto;
                 border-radius: 8px;
                 overflow: hidden;
             }}
             #reader__scan_region video {{
                 object-fit: cover !important;
-                max-height: 220px !important;
+                max-height: 200px !important;
+            }}
+            #reader__dashboard {{
+                padding: 4px !important;
             }}
         </style>
     </head>
@@ -75,17 +81,20 @@ def android_compatible_qr_scanner(key="qr_scanner"):
         <div id="reader"></div>
         <script>
             function onScanSuccess(decodedText, decodedResult) {{
-                window.parent.postMessage({{
-                    type: "streamlit:setComponentValue",
-                    value: String(decodedText)
-                }}, "*");
+                let seatNo = String(decodedText).trim();
+                if (seatNo && !seatNo.includes("DeltaGenerator")) {{
+                    window.parent.postMessage({{
+                        type: "streamlit:setComponentValue",
+                        value: seatNo
+                    }}, "*");
+                }}
             }}
 
             let html5QrcodeScanner = new Html5QrcodeScanner(
                 "reader", 
                 {{ 
                     fps: 10, 
-                    qrbox: {{width: 200, height: 200}},
+                    qrbox: {{width: 180, height: 180}},
                     facingMode: "environment"
                 }},
                 false
@@ -95,7 +104,7 @@ def android_compatible_qr_scanner(key="qr_scanner"):
     </body>
     </html>
     """
-    return components.html(scanner_html, height=260)
+    return components.html(scanner_code, height=250)
 
 # CSS 樣式設定
 st.markdown("""
@@ -300,9 +309,8 @@ else:
             seat_no = ""
 
             if input_mode == "📷 鏡頭掃描":
-                qr_code_val = android_compatible_qr_scanner(key=f"scanner_{selected_category}_{selected_route}")
-                if qr_code_val:
-                    seat_no = clean_seat_number(qr_code_val)
+                qr_code_val = universal_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
+                seat_no = clean_seat_number(qr_code_val)
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 seat_no = clean_seat_number(raw_input)
