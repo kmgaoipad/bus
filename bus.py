@@ -51,13 +51,15 @@ def load_users():
     except Exception:
         return None
 
-# Canvas 直繪技術：100% 破解 iOS Safari / Android 視訊黑屏 BUG
-def canvas_rendered_qr_scanner(key_name="canvas_qr_scanner"):
+# 修正 Streamlit 傳值 Bridge 的全自動掃描器
+def perfect_sync_qr_scanner(key_name="sync_qr_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+        <!-- 引入 Streamlit 官方元件 SDK -->
+        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #wrapper {{
                 width: 100%;
@@ -157,11 +159,22 @@ def canvas_rendered_qr_scanner(key_name="canvas_qr_scanner"):
                 }});
             }}
 
+            function sendSeatToPython(seatVal) {{
+                // 優先使用 Streamlit Component API 傳值
+                if (window.Streamlit) {{
+                    window.Streamlit.setComponentValue(seatVal);
+                }}
+                // 備用 postMessage 傳值
+                window.parent.postMessage({{
+                    type: "streamlit:setComponentValue",
+                    value: seatVal
+                }}, "*");
+            }}
+
             function renderAndScanLoop() {{
                 if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {{
                     canvas.width = video.videoWidth;
                     canvas.height = video.videoHeight;
-                    // 將 Video 視訊畫面即時繪製到 Canvas（徹底破解 Safari 黑屏）
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     
                     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -175,12 +188,8 @@ def canvas_rendered_qr_scanner(key_name="canvas_qr_scanner"):
                             let cleanCode = qrCode.data.trim();
                             if (cleanCode !== lastScannedCode) {{
                                 lastScannedCode = cleanCode;
-                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，正在比對...";
-                                
-                                window.parent.postMessage({{
-                                    type: "streamlit:setComponentValue",
-                                    value: cleanCode
-                                }}, "*");
+                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，正在進行比對...";
+                                sendSeatToPython(cleanCode);
                             }}
                         }}
                     }}
@@ -398,17 +407,18 @@ else:
             # 3. 驗證方式選擇
             input_mode = st.radio("3. 驗證方式：", ["📷 對焦瞄準連刷", "⌨️ 手動輸入"], horizontal=True)
 
+            scanned_val = ""
             if input_mode == "📷 對焦瞄準連刷":
-                scanned_val = canvas_rendered_qr_scanner(key_name=f"canvas_scan_{selected_category}_{selected_route}")
-                if scanned_val:
-                    cleaned_str = clean_seat_number(scanned_val)
-                    if cleaned_str and cleaned_str != st.session_state["detected_seat"]:
-                        st.session_state["detected_seat"] = cleaned_str
-                        st.rerun()  # 抓到新座號時，即刻重新整理並執行比對
+                scanned_val = perfect_sync_qr_scanner(key_name=f"sync_scan_{selected_category}_{selected_route}")
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
-                    st.session_state["detected_seat"] = clean_seat_number(raw_input)
+                    scanned_val = raw_input
+
+            # 一旦捕捉到座號，即刻寫入 Session State 並執行比對
+            cleaned_str = clean_seat_number(scanned_val)
+            if cleaned_str:
+                st.session_state["detected_seat"] = cleaned_str
 
             seat_no = st.session_state.get("detected_seat", "")
 
