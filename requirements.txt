@@ -4,5 +4,4 @@ openpyxl
 requests
 supabase
 opencv-python-headless
-pyzbar
 pillow
