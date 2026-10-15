@@ -51,37 +51,51 @@ def load_users():
     except Exception:
         return None
 
-# 經典四角定位框全自動掃描器 (去除綠線，改為四角框 + 自動判斷比對)
-def four_corner_box_qr_scanner(key_name="four_corner_scanner"):
+# Canvas 直繪技術：100% 破解 iOS Safari / Android 視訊黑屏 BUG
+def canvas_rendered_qr_scanner(key_name="canvas_qr_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
         <style>
-            #reader-wrapper {{
+            #wrapper {{
                 width: 100%;
                 max-width: 320px;
                 margin: 0 auto;
                 text-align: center;
                 position: relative;
             }}
-            #reader {{
+            #canvas-view {{
                 width: 100%;
-                height: 250px !important;
+                height: 230px;
                 border-radius: 12px;
+                border: 2px solid #28a745;
                 background-color: #000;
-                overflow: hidden;
-                border: 2px solid #007bff;
+                object-fit: cover;
             }}
-            #reader video {{
-                object-fit: cover !important;
-                width: 100% !important;
-                height: 100% !important;
+            .corner-overlay {{
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: 180px;
+                height: 180px;
+                transform: translate(-50%, -50%);
+                border: 2px dashed #00ff00;
+                box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+                pointer-events: none;
+                border-radius: 8px;
             }}
-            /* 隱藏 html5-qrcode 預設的雷射掃描線與不必要提示 */
-            #reader__scan_region img {{
-                display: none !important;
+            .btn-start {{
+                background-color: #28a745;
+                color: white;
+                border: none;
+                padding: 12px 22px;
+                font-size: 16px;
+                font-weight: bold;
+                border-radius: 8px;
+                cursor: pointer;
+                box-shadow: 0 3px 6px rgba(0,0,0,0.2);
             }}
             #status-msg {{
                 font-size: 13px;
@@ -89,90 +103,91 @@ def four_corner_box_qr_scanner(key_name="four_corner_scanner"):
                 margin-top: 6px;
                 font-weight: bold;
             }}
-            .btn-activate {{
-                background-color: #007bff;
-                color: white;
-                border: none;
-                padding: 10px 20px;
-                font-size: 15px;
-                font-weight: bold;
-                border-radius: 8px;
-                cursor: pointer;
-                box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-            }}
         </style>
     </head>
     <body style="margin:0; padding:0; background:transparent;">
-        <div id="reader-wrapper">
-            <button id="start-btn" class="btn-activate" onclick="startFourCornerScanner()">📷 點此開啟四角瞄準相機</button>
-            <div id="reader" style="display:none;"></div>
+        <div id="wrapper">
+            <button id="start-btn" class="btn-start" onclick="initCanvasCamera()">📷 點此開啟對焦相機</button>
+            <div id="cam-box" style="display:none; position:relative;">
+                <canvas id="canvas-view"></canvas>
+                <div class="corner-overlay"></div>
+            </div>
+            <video id="hidden-video" playsinline muted style="display:none;"></video>
             <div id="status-msg"></div>
         </div>
 
         <script>
-            let html5QrCode = null;
+            const video = document.getElementById("hidden-video");
+            const canvas = document.getElementById("canvas-view");
+            const ctx = canvas.getContext("2d");
+            const statusMsg = document.getElementById("status-msg");
             let lastScannedCode = "";
+            let isScanning = false;
 
-            function startFourCornerScanner() {{
+            function initCanvasCamera() {{
                 document.getElementById("start-btn").style.display = "none";
-                document.getElementById("reader").style.display = "block";
-                document.getElementById("status-msg").innerText = "🎯 請將 QR Code 放入四角對焦框內...";
+                document.getElementById("cam-box").style.display = "block";
+                statusMsg.innerText = "🎯 請將 QR Code 放入綠色對焦框內...";
 
-                html5QrCode = new Html5Qrcode("reader");
+                const constraintsList = [
+                    {{ video: {{ facingMode: {{ exact: "environment" }} }} }},
+                    {{ video: {{ facingMode: "environment" }} }},
+                    {{ video: true }}
+                ];
 
-                // 設定標準 200x200 四角定位瞄準框 (無掃描條)
-                const config = {{
-                    fps: 15,
-                    qrbox: {{ width: 200, height: 200 }},
-                    experimentalFeatures: {{
-                        useBarCodeDetectorIfSupported: true
-                    }}
-                }};
+                tryGetUserMedia(constraintsList, 0);
+            }}
 
-                const constraints = {{
-                    facingMode: "environment",
-                    advanced: [{{ focusMode: "continuous" }}]
-                }};
+            function tryGetUserMedia(list, idx) {{
+                if (idx >= list.length) {{
+                    statusMsg.innerText = "❌ 相機開啟失敗，請確認已允許權限；若在 LINE 中請用 Chrome/Safari 開啟。";
+                    return;
+                }}
 
-                html5QrCode.start(
-                    constraints,
-                    config,
-                    (decodedText, decodedResult) => {{
-                        if (decodedText && decodedText.trim() !== "") {{
-                            let cleanText = decodedText.trim();
-                            if (cleanText !== lastScannedCode) {{
-                                lastScannedCode = cleanText;
-                                document.getElementById("status-msg").innerText = "⚡ 成功讀取座號：" + cleanText + "，正在比對...";
+                navigator.mediaDevices.getUserMedia(list[idx])
+                .then(function(stream) {{
+                    video.srcObject = stream;
+                    video.setAttribute("playsinline", "true");
+                    video.play();
+                    isScanning = true;
+                    requestAnimationFrame(renderAndScanLoop);
+                }})
+                .catch(function(err) {{
+                    tryGetUserMedia(list, idx + 1);
+                }});
+            }}
+
+            function renderAndScanLoop() {{
+                if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {{
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    // 將 Video 視訊畫面即時繪製到 Canvas（徹底破解 Safari 黑屏）
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    
+                    if (typeof jsQR !== 'undefined') {{
+                        const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {{
+                            inversionAttempts: "dontInvert"
+                        }});
+                        
+                        if (qrCode && qrCode.data && qrCode.data.trim() !== "") {{
+                            let cleanCode = qrCode.data.trim();
+                            if (cleanCode !== lastScannedCode) {{
+                                lastScannedCode = cleanCode;
+                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，正在比對...";
                                 
-                                // 即時傳回 Streamlit 觸發自動判定
                                 window.parent.postMessage({{
                                     type: "streamlit:setComponentValue",
-                                    value: cleanText
+                                    value: cleanCode
                                 }}, "*");
                             }}
                         }}
                     }}
-                ).catch(err => {{
-                    // 降級備用後置相機調用
-                    html5QrCode.start(
-                        {{ facingMode: "environment" }},
-                        config,
-                        (decodedText) => {{
-                            if (decodedText && decodedText.trim() !== "") {{
-                                let cleanText = decodedText.trim();
-                                if (cleanText !== lastScannedCode) {{
-                                    lastScannedCode = cleanText;
-                                    window.parent.postMessage({{
-                                        type: "streamlit:setComponentValue",
-                                        value: cleanText
-                                    }}, "*");
-                                }}
-                            }}
-                        }}
-                    ).catch(err2 => {{
-                        document.getElementById("status-msg").innerText = "❌ 相機開啟失敗，請確認已允許權限；若在 LINE 中請以 Chrome/Safari 開啟。";
-                    }});
-                }});
+                }}
+                if (isScanning) {{
+                    requestAnimationFrame(renderAndScanLoop);
+                }}
             }}
         </script>
     </body>
@@ -381,15 +396,15 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 四角對焦自動連刷", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 對焦瞄準連刷", "⌨️ 手動輸入"], horizontal=True)
 
-            if input_mode == "📷 四角對焦自動連刷":
-                scanned_val = four_corner_box_qr_scanner(key_name=f"fc_scan_{selected_category}_{selected_route}")
+            if input_mode == "📷 對焦瞄準連刷":
+                scanned_val = canvas_rendered_qr_scanner(key_name=f"canvas_scan_{selected_category}_{selected_route}")
                 if scanned_val:
                     cleaned_str = clean_seat_number(scanned_val)
                     if cleaned_str and cleaned_str != st.session_state["detected_seat"]:
                         st.session_state["detected_seat"] = cleaned_str
-                        st.rerun()  # 抓到新座號時，強制觸發重新整理並比對資料
+                        st.rerun()  # 抓到新座號時，即刻重新整理並執行比對
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
