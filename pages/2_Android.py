@@ -47,14 +47,13 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# Android 專用相機元件 (修正 components.html 參數)
+# Android 專用相機元件
 def android_camera_scanner():
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #reader-wrapper {{ width: 100%; max-width: 320px; margin: 0 auto; text-align: center; }}
             #reader {{ width: 100%; height: 230px !important; border-radius: 10px; border: 2px solid #28a745; background-color: #000; overflow: hidden; }}
@@ -86,7 +85,7 @@ def android_camera_scanner():
                     {{ facingMode: "environment" }},
                     config,
                     (decodedText) => {{
-                        if (decodedText && decodedText.trim !== undefined && decodedText.trim() !== "") {{
+                        if (decodedText && decodedText.trim() !== "") {{
                             let cleanText = decodedText.trim();
                             if (cleanText !== lastScannedCode) {{
                                 lastScannedCode = cleanText;
@@ -105,13 +104,18 @@ def android_camera_scanner():
             }}
 
             function sendToParent(val) {{
-                if (window.Streamlit) {{
-                    window.Streamlit.setComponentValue(val);
-                }} else {{
-                    window.parent.postMessage({{
-                        type: "streamlit:setComponentValue",
-                        value: val
-                    }}, "*");
+                try {{
+                    let searchParams = new URLSearchParams(window.top.location.search);
+                    searchParams.set("seat", val);
+                    window.top.location.search = searchParams.toString();
+                }} catch (e) {{
+                    try {{
+                        let searchParams = new URLSearchParams(window.parent.location.search);
+                        searchParams.set("seat", val);
+                        window.parent.location.search = searchParams.toString();
+                    }} catch (err) {{
+                        console.log(err);
+                    }}
                 }}
             }}
         </script>
@@ -188,9 +192,10 @@ else:
 
             seat_no = ""
             if input_mode == "📷 Android 相機對焦連刷":
-                scanned_val = android_camera_scanner()
-                if scanned_val:
-                    seat_no = clean_seat_number(scanned_val)
+                url_seat = st.query_params.get("seat", "")
+                if url_seat:
+                    seat_no = clean_seat_number(url_seat)
+                android_camera_scanner()
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:

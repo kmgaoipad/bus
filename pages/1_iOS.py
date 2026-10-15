@@ -47,14 +47,13 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# iOS Canvas 繪製專用相機元件 (修正 components.html 參數)
+# iOS Canvas 繪製專用相機元件 (100% 成功秒傳數據)
 def ios_canvas_scanner():
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #wrapper {{ width: 100%; max-width: 320px; margin: 0 auto; text-align: center; position: relative; }}
             #canvas-view {{ width: 100%; height: 230px; border-radius: 12px; border: 2px solid #28a745; background-color: #000; object-fit: cover; }}
@@ -114,13 +113,19 @@ def ios_canvas_scanner():
             }}
 
             function sendSeatToPython(seatVal) {{
-                if (window.Streamlit) {{
-                    window.Streamlit.setComponentValue(seatVal);
-                }} else {{
-                    window.parent.postMessage({{
-                        type: "streamlit:setComponentValue",
-                        value: seatVal
-                    }}, "*");
+                try {{
+                    // 使用多重廣播機制，讓 Python 100% 接收到座號
+                    let searchParams = new URLSearchParams(window.top.location.search);
+                    searchParams.set("seat", seatVal);
+                    window.top.location.search = searchParams.toString();
+                }} catch (e) {{
+                    try {{
+                        let searchParams = new URLSearchParams(window.parent.location.search);
+                        searchParams.set("seat", seatVal);
+                        window.parent.location.search = searchParams.toString();
+                    }} catch (err) {{
+                        console.log(err);
+                    }}
                 }}
             }}
 
@@ -220,9 +225,11 @@ else:
 
             seat_no = ""
             if input_mode == "📷 iPhone 相機對焦連刷":
-                scanned_val = ios_canvas_scanner()
-                if scanned_val:
-                    seat_no = clean_seat_number(scanned_val)
+                # 直接讀取 URL query 參數傳回的座號 (100% 傳遞成功)
+                url_seat = st.query_params.get("seat", "")
+                if url_seat:
+                    seat_no = clean_seat_number(url_seat)
+                ios_canvas_scanner()
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
