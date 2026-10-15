@@ -23,10 +23,15 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 整理班級座號字串（處理 float 自動補 .0 的問題）
+# 安全整理班級座號字串（容錯處理）
 def clean_seat_number(val):
-    if pd.isna(val):
+    if val is None:
         return ""
+    try:
+        if pd.isna(val):
+            return ""
+    except Exception:
+        pass
     s = str(val).strip()
     if s.endswith('.0'):
         s = s[:-2]
@@ -47,7 +52,6 @@ def load_users():
 
 # 相容 Android & iOS 的跨平台 QR Code 掃描器組件
 def android_compatible_qr_scanner(key="qr_scanner"):
-    # 使用 html5-qrcode 庫，完整支援 Android Chrome 與 iOS Safari 的相機硬體
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
@@ -71,10 +75,9 @@ def android_compatible_qr_scanner(key="qr_scanner"):
         <div id="reader"></div>
         <script>
             function onScanSuccess(decodedText, decodedResult) {{
-                // 將掃描到的文字回傳給 Streamlit
                 window.parent.postMessage({{
                     type: "streamlit:setComponentValue",
-                    value: decodedText
+                    value: String(decodedText)
                 }}, "*");
             }}
 
@@ -83,9 +86,9 @@ def android_compatible_qr_scanner(key="qr_scanner"):
                 {{ 
                     fps: 10, 
                     qrbox: {{width: 200, height: 200}},
-                    facingMode: "environment" // 預設強制使用後置鏡頭
+                    facingMode: "environment"
                 }},
-                /* verbose= */ false
+                false
             );
             html5QrcodeScanner.render(onScanSuccess);
         </script>
@@ -297,7 +300,6 @@ else:
             seat_no = ""
 
             if input_mode == "📷 鏡頭掃描":
-                # 使用 Android & iOS 雙平台相容的相機元件
                 qr_code_val = android_compatible_qr_scanner(key=f"scanner_{selected_category}_{selected_route}")
                 if qr_code_val:
                     seat_no = clean_seat_number(qr_code_val)
