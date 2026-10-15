@@ -51,98 +51,60 @@ def load_users():
     except Exception:
         return None
 
-# 原生 JS 實時自動動態掃描元件 (無需按 Take Photo)
-def real_time_auto_qr_scanner(key="live_qr_scanner"):
+# 高穩定度即時自動掃描組件 (100% 畫面顯示 + 掃到即自動判斷)
+def stable_auto_qr_scanner(key_name="auto_qr_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+        <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
         <style>
-            #container {{
-                position: relative;
+            #reader {{
                 width: 100%;
                 max-width: 320px;
                 margin: 0 auto;
-                text-align: center;
-            }}
-            #video {{
-                width: 100%;
-                height: 220px;
-                object-fit: cover;
                 border-radius: 8px;
+                overflow: hidden;
                 border: 2px solid #007bff;
             }}
-            #canvas {{
-                display: none;
-            }}
-            .scan-line {{
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 2px;
-                background: #00ff00;
-                box-shadow: 0 0 8px #00ff00;
-                animation: scan 2s infinite linear;
-            }}
-            @keyframes scan {{
-                0% {{ top: 0%; }}
-                50% {{ top: 95%; }}
-                100% {{ top: 0%; }}
+            #reader video {{
+                object-fit: cover !important;
+                width: 100% !important;
+                height: 220px !important;
             }}
         </style>
     </head>
-    <body style="margin:0; padding:0; background:transparent;">
-        <div id="container">
-            <video id="video" playsinline></video>
-            <div class="scan-line"></div>
-            <canvas id="canvas"></canvas>
-        </div>
+    <body style="margin:0; padding:0; background:transparent; text-align:center;">
+        <div id="reader"></div>
         <script>
-            const video = document.getElementById("video");
-            const canvas = document.getElementById("canvas");
-            const ctx = canvas.getContext("2d");
-            let isScanning = true;
-
-            navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: "environment" }} }})
-            .then(function(stream) {{
-                video.srcObject = stream;
-                video.setAttribute("playsinline", true);
-                video.play();
-                requestAnimationFrame(tick);
-            }}).catch(function(err) {{
-                console.error("Camera Access Error: ", err);
-            }});
-
-            function tick() {{
-                if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {{
-                    canvas.height = video.videoHeight;
-                    canvas.width = video.videoWidth;
-                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                    
-                    var code = jsQR(imageData.data, imageData.width, imageData.height, {{
-                        inversionAttempts: "dontInvert",
-                    }});
-
-                    if (code && code.data && code.data.trim() !== "") {{
-                        let seatNo = code.data.trim();
-                        window.parent.postMessage({{
-                            type: "streamlit:setComponentValue",
-                            value: seatNo
-                        }}, "*");
-                    }}
-                }}
-                if (isScanning) {{
-                    requestAnimationFrame(tick);
+            function sendToStreamlit(val) {{
+                let cleanVal = String(val).trim();
+                if (cleanVal) {{
+                    window.parent.postMessage({{
+                        type: "streamlit:setComponentValue",
+                        value: cleanVal
+                    }}, "*");
                 }}
             }}
+
+            const html5QrCode = new Html5Qrcode("reader");
+            const config = {{ fps: 15, qrbox: {{ width: 200, height: 200 }} }};
+
+            // 優先嘗試後置相機 (environment)，若失敗則調用預設相機
+            html5QrCode.start({{ facingMode: "environment" }}, config, (decodedText, decodedResult) => {{
+                sendToStreamlit(decodedText);
+            }}).catch(err => {{
+                html5QrCode.start({{ facingMode: "user" }}, config, (decodedText, decodedResult) => {{
+                    sendToStreamlit(decodedText);
+                }}).catch(err2 => {{
+                    console.error("Camera Error: ", err2);
+                }});
+            }});
         </script>
     </body>
     </html>
     """
-    return components.html(scanner_html, height=230)
+    return components.html(scanner_html, height=240)
 
 # CSS 樣式設定
 st.markdown("""
@@ -347,7 +309,7 @@ else:
             seat_no = ""
 
             if input_mode == "📷 鏡頭即時自動掃描":
-                raw_code = real_time_auto_qr_scanner(key=f"scanner_{selected_category}_{selected_route}")
+                raw_code = stable_auto_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
                 seat_no = clean_seat_number(raw_code)
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
