@@ -287,12 +287,19 @@ if st.session_state["is_admin"]:
 
     st.stop()
 # ---------------------------------------------------------
-# 🚌 一般使用者：主系統畫面
+# 🚌 一般使用者：主系統畫面（含頂部登出列）
 # ---------------------------------------------------------
 
-with st.sidebar:
-    st.write(f"👤 當前使用者：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
-    if st.button("🚪 安全登出"):
+# 1. 頁面頂部：系統標題與登出列
+col_title, col_user_info = st.columns([2, 1])
+
+with col_title:
+    st.title("🚌 KMSH校車驗證系統")
+
+with col_user_info:
+    st.write(f"👤 **{st.session_state['user_name']}** ({st.session_state['user_id']})")
+    if st.button("🚪 安全登出", type="secondary", use_container_width=True):
+        # 紀錄登出時間至 Supabase
         if st.session_state["log_id"] and supabase:
             try:
                 supabase.table("usage_logs").update({
@@ -301,6 +308,7 @@ with st.sidebar:
             except Exception:
                 pass
                 
+        # 清除登入狀態並重置
         st.session_state["authenticated"] = False
         st.session_state["is_admin"] = False
         st.session_state["user_id"] = ""
@@ -308,51 +316,9 @@ with st.sidebar:
         st.session_state["log_id"] = None
         st.rerun()
 
-CATEGORY_CONFIG = {
-    "上學": {"file": "上學各路線名單.xlsx", "filter": None},
-    "大放學 (第1梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放1"},
-    "大放學 (第2梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放2"},
-    "週一小放學 (第1梯)": {"file": "週1小放學1梯各路線名單.xlsx", "filter": None},
-    "週一小放學 (第2梯)": {"file": "週1小放學2梯各路線名單.xlsx", "filter": None},
-    "週二小放學 (第1梯)": {"file": "週2小放學1梯各路線名單.xlsx", "filter": None},
-    "週二小放學 (第2梯)": {"file": "週2小放學2梯各路線名單.xlsx", "filter": None},
-    "週三小放學": {"file": "週3小放學各路線名單.xlsx", "filter": None},
-    "週四小放學 (第1梯)": {"file": "週4小放學1梯各路線名單.xlsx", "filter": None},
-    "週四小放學 (第2梯)": {"file": "週4小放學2梯各路線名單.xlsx", "filter": None},
-    "週五小放學": {"file": "週5小放學各路線名單.xlsx", "filter": None},
-    "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
-}
+st.divider()
 
-@st.cache_data
-def load_category_data(file_path, prefix_filter=None):
-    if not os.path.exists(file_path):
-        return None, None
-        
-    xls = pd.ExcelFile(file_path)
-    all_dfs = []
-    
-    target_sheets = xls.sheet_names
-    if prefix_filter:
-        target_sheets = [s for s in xls.sheet_names if s.startswith(prefix_filter)]
-        
-    for sheet_name in target_sheets:
-        df = pd.read_excel(xls, sheet_name=sheet_name)
-        df['路線名稱'] = sheet_name.strip()
-        all_dfs.append(df)
-        
-    if not all_dfs:
-        return None, None
-        
-    combined_df = pd.concat(all_dfs, ignore_index=True)
-    
-    # 統一清理「班級座號」格式，避免 .0 影響比對
-    combined_df['班級座號'] = combined_df['班級座號'].apply(clean_seat_number)
-    
-    return combined_df, target_sheets
-
-st.title("🚌 KMSH校車驗證系統")
-
-# 1. 選擇時段類別
+# 2. 選擇時段類別
 category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
 selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
 
@@ -365,7 +331,7 @@ else:
     if df is None:
         st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認檔案已上傳！")
     else:
-        # 2. 選擇車輛路線
+        # 3. 選擇車輛路線
         route_options = ["-- 請點此選擇路線 --"] + list(route_list)
         selected_route = st.selectbox("2. 請選擇車輛路線：", route_options, index=0)
 
@@ -383,7 +349,7 @@ else:
 
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
-            # 3. 驗證方式選擇
+            # 4. 驗證方式選擇
             input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
 
             seat_no = ""
@@ -396,7 +362,7 @@ else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 seat_no = clean_seat_number(raw_input)
 
-            # 4. 進行驗證與結果顯示
+            # 5. 進行驗證與結果顯示
             if seat_no:
                 student_records = df[df['班級座號'] == seat_no]
                 st.divider()
@@ -406,7 +372,6 @@ else:
                     actual_route = student_info['路線名稱']
                     student_name = student_info['學生姓名']
                     
-                    # 相容「放學站名/上學站名」與「放學站號/上學站號」欄位
                     station_name = student_info.get('放學站名') or student_info.get('上學站名') or "未設定"
                     station_no = student_info.get('放學站號') or student_info.get('上學站號') or "未設定"
                     
