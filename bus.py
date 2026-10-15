@@ -51,161 +51,100 @@ def load_users():
     except Exception:
         return None
 
-# 原生 HTML5 BarcodeDetector + WebRTC 超級相容即時掃描組件
-def android_certified_live_qr_scanner(key_name="auto_scanner"):
+# 原生連續不中斷掃描器 (座號改變自動即時判斷，無須重置按鈕)
+def continuous_live_qr_scanner(key_name="continuous_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <meta charset="utf-8">
-        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+        <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
         <style>
-            #scanner-card {{
+            #reader-wrapper {{
                 width: 100%;
                 max-width: 320px;
                 margin: 0 auto;
                 text-align: center;
-                position: relative;
             }}
-            #v-element {{
+            #reader {{
                 width: 100%;
-                height: 210px;
-                object-fit: cover;
                 border-radius: 8px;
-                border: 2px solid #007bff;
+                border: 2px solid #28a745;
+                overflow: hidden;
                 background-color: #000;
-                display: none;
             }}
-            .laser {{
-                position: absolute;
-                top: 0; left: 0;
-                width: 100%; height: 2px;
-                background: #00ff00;
-                box-shadow: 0 0 10px #00ff00;
-                animation: scan 1.8s infinite linear;
-                display: none;
-            }}
-            @keyframes scan {{
-                0% {{ top: 5%; }}
-                50% {{ top: 90%; }}
-                100% {{ top: 5%; }}
-            }}
-            .start-btn {{
-                background-color: #007bff;
-                color: #fff;
-                border: none;
-                padding: 12px 24px;
-                font-size: 16px;
-                font-weight: bold;
-                border-radius: 8px;
-                cursor: pointer;
-                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            #reader video {{
+                object-fit: cover !important;
+                width: 100% !important;
+                height: 200px !important;
             }}
             #status-msg {{
-                font-size: 13px;
-                color: #666;
-                margin-top: 6px;
+                font-size: 12px;
+                color: #555;
+                margin-top: 4px;
             }}
         </style>
     </head>
     <body style="margin:0; padding:0; background:transparent;">
-        <div id="scanner-card">
-            <button id="btn-activate" class="start-btn" onclick="initAndroidCamera()">📷 點此開啟鏡頭即時自動掃描</button>
-            <div id="cam-display">
-                <video id="v-element" autoplay playsinline muted></video>
-                <div id="laser-line" class="laser"></div>
-            </div>
-            <canvas id="c-element" style="display:none;"></canvas>
-            <div id="status-msg"></div>
+        <div id="reader-wrapper">
+            <div id="reader"></div>
+            <div id="status-msg">📷 鏡頭對焦中，對準 QR Code 即自動連刷...</div>
         </div>
 
         <script>
-            const video = document.getElementById('v-element');
-            const canvas = document.getElementById('c-element');
-            const ctx = canvas.getContext('canvas' in document ? '2d' : null);
-            const btn = document.getElementById('btn-activate');
-            const laser = document.getElementById('laser-line');
-            const status = document.getElementById('status-msg');
-            let isRunning = false;
+            let html5QrCode = new Html5Qrcode("reader");
+            let lastScannedCode = "";
 
-            function initAndroidCamera() {{
-                btn.style.display = 'none';
-                video.style.display = 'block';
-                laser.style.display = 'block';
-                status.innerText = "🔍 請對準學生證 QR Code...";
+            const config = {{
+                fps: 15,
+                qrbox: {{ width: 180, height: 180 }},
+                experimentalFeatures: {{
+                    useBarCodeDetectorIfSupported: true
+                }}
+            }};
 
-                const constraints = {{
-                    video: {{
-                        facingMode: {{ exact: "environment" }},
-                        width: {{ ideal: 1280 }},
-                        height: {{ ideal: 720 }}
+            function startContinuousScanner() {{
+                html5QrCode.start(
+                    {{ facingMode: "environment" }},
+                    config,
+                    (decodedText, decodedResult) => {{
+                        if (decodedText && decodedText.trim() !== "") {{
+                            let cleanText = decodedText.trim();
+                            // 僅在掃描到「新座號」時發送，防止相同卡片持續刷閃
+                            if (cleanText !== lastScannedCode) {{
+                                lastScannedCode = cleanText;
+                                document.getElementById("status-msg").innerText = "⚡ 最新掃描座號：" + cleanText;
+                                window.parent.postMessage({{
+                                    type: "streamlit:setComponentValue",
+                                    value: cleanText
+                                }}, "*");
+                            }}
+                        }}
                     }}
-                }};
-
-                // 先嘗試強制開啟後置主鏡頭
-                navigator.mediaDevices.getUserMedia(constraints)
-                .then(startStream)
-                .catch(err => {{
-                    // 若 exact environment 失敗 (部分 Android 機型)，降級為一般攝影機請求
-                    navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: "environment" }} }})
-                    .then(startStream)
-                    .catch(err2 => {{
-                        navigator.mediaDevices.getUserMedia({{ video: true }})
-                        .then(startStream)
-                        .catch(err3 => {{
-                            status.innerText = "❌ 無法開啟相機，請確認瀏覽器相機權限；若在 LINE 中請用 Chrome 開啟。";
-                        }});
+                ).catch(err => {{
+                    // 備用相機調用
+                    html5QrCode.start({{ facingMode: "user" }}, config, (decodedText) => {{
+                        if (decodedText && decodedText.trim() !== "") {{
+                            let cleanText = decodedText.trim();
+                            if (cleanText !== lastScannedCode) {{
+                                lastScannedCode = cleanText;
+                                window.parent.postMessage({{
+                                    type: "streamlit:setComponentValue",
+                                    value: cleanText
+                                }}, "*");
+                            }}
+                        }}
+                    }}).catch(err2 => {{
+                        document.getElementById("status-msg").innerText = "❌ 相機存取失敗，請確認瀏覽器相機權限；若在 LINE 中請用 Chrome 開啟。";
                     }});
                 }});
             }}
 
-            function startStream(stream) {{
-                video.srcObject = stream;
-                video.setAttribute("playsinline", "true");
-                video.play();
-                isRunning = true;
-                requestAnimationFrame(scanCycle);
-            }}
-
-            function sendSeatToStreamlit(codeStr) {{
-                window.parent.postMessage({{
-                    type: "streamlit:setComponentValue",
-                    value: codeStr
-                }}, "*");
-            }}
-
-            function scanCycle() {{
-                if (video.readyState === video.HAVE_ENOUGH_DATA && isRunning) {{
-                    canvas.width = video.videoWidth;
-                    canvas.height = video.videoHeight;
-                    const cContext = canvas.getContext('2d');
-                    cContext.drawImage(video, 0, 0, canvas.width, canvas.height);
-                    
-                    const imgData = cContext.getImageData(0, 0, canvas.width, canvas.height);
-                    
-                    // 使用原生高效 jsQR 引擎
-                    if (typeof jsQR !== 'undefined') {{
-                        const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {{
-                            inversionAttempts: "dontInvert"
-                        }});
-                        if (qrCode && qrCode.data && qrCode.data.trim() !== '') {{
-                            const seatResult = qrCode.data.trim();
-                            isRunning = false;
-                            status.innerText = "✅ 成功辨識：" + seatResult;
-                            sendSeatToStreamlit(seatResult);
-                            return;
-                        }}
-                    }}
-                }}
-                if (isRunning) {{
-                    requestAnimationFrame(scanCycle);
-                }}
-            }}
+            startContinuousScanner();
         </script>
     </body>
     </html>
     """
-    return components.html(scanner_html, height=270)
+    return components.html(scanner_html, height=240)
 
 # CSS 樣式設定
 st.markdown("""
@@ -408,14 +347,14 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時動態自動掃描", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭連刷自動掃描", "⌨️ 手動輸入"], horizontal=True)
 
-            if input_mode == "📷 鏡頭即時動態自動掃描":
-                raw_code = android_certified_live_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
-                if raw_code:
-                    cleaned_val = clean_seat_number(raw_code)
-                    if cleaned_val:
-                        st.session_state["detected_seat"] = cleaned_val
+            if input_mode == "📷 鏡頭連刷自動掃描":
+                scanned_val = continuous_live_qr_scanner(key_name=f"scan_{selected_category}_{selected_route}")
+                if scanned_val:
+                    cleaned_str = clean_seat_number(scanned_val)
+                    if cleaned_str and cleaned_str != st.session_state["detected_seat"]:
+                        st.session_state["detected_seat"] = cleaned_str
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
@@ -447,7 +386,3 @@ else:
                         st.warning(f"⚠️ 應搭乘：**【{actual_route}】** ｜ 站名：{station_name} ({station_no})")
                 else:
                     st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
-
-                if st.button("🔄 掃描/驗證下一位"):
-                    st.session_state["detected_seat"] = ""
-                    st.rerun()
