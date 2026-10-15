@@ -47,13 +47,14 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# iOS Canvas 繪製專用相機元件
-def ios_canvas_scanner():
+# iOS Canvas 繪製專用相機元件 (官方 Bridge 傳值模式)
+def ios_canvas_scanner(key=None):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #wrapper {{ width: 100%; max-width: 320px; margin: 0 auto; text-align: center; position: relative; }}
             #canvas-view {{ width: 100%; height: 230px; border-radius: 12px; border: 2px solid #28a745; background-color: #000; object-fit: cover; }}
@@ -112,6 +113,17 @@ def ios_canvas_scanner():
                 }});
             }}
 
+            function sendSeatToPython(seatVal) {{
+                if (window.Streamlit) {{
+                    window.Streamlit.setComponentValue(seatVal);
+                }} else {{
+                    window.parent.postMessage({{
+                        type: "streamlit:setComponentValue",
+                        value: seatVal
+                    }}, "*");
+                }}
+            }}
+
             function renderLoop() {{
                 if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {{
                     canvas.width = video.videoWidth;
@@ -126,31 +138,19 @@ def ios_canvas_scanner():
                             let cleanCode = qrCode.data.trim();
                             if (cleanCode !== lastScannedCode) {{
                                 lastScannedCode = cleanCode;
-                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode;
-                                sendToParent(cleanCode);
+                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，即刻比對中...";
+                                sendSeatToPython(cleanCode);
                             }}
                         }}
                     }}
                 }}
                 if (isScanning) requestAnimationFrame(renderLoop);
             }}
-
-            function sendToParent(val) {{
-                try {{
-                    const url = new URL(window.parent.location.href);
-                    if (url.searchParams.get("seat") !== val) {{
-                        url.searchParams.set("seat", val);
-                        window.parent.location.href = url.href;
-                    }}
-                }} catch (e) {{
-                    console.log(e);
-                }}
-            }}
         </script>
     </body>
     </html>
     """
-    return components.html(scanner_html, height=290)
+    return components.html(scanner_html, height=290, key=key)
 
 CATEGORY_CONFIG = {
     "上學": {"file": "上學各路線名單.xlsx", "filter": None},
@@ -220,10 +220,9 @@ else:
 
             seat_no = ""
             if input_mode == "📷 iPhone 相機對焦連刷":
-                url_seat = st.query_params.get("seat", "")
-                if url_seat:
-                    seat_no = clean_seat_number(url_seat)
-                ios_canvas_scanner()
+                scanned_val = ios_canvas_scanner(key=f"ios_cam_{selected_category}_{selected_route}")
+                if scanned_val:
+                    seat_no = clean_seat_number(scanned_val)
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:

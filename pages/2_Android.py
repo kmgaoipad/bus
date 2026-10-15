@@ -47,13 +47,14 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# Android 專用相機元件 (Html5Qrcode 硬體相容引擎)
-def android_camera_scanner():
+# Android 專用相機元件
+def android_camera_scanner(key=None):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #reader-wrapper {{ width: 100%; max-width: 320px; margin: 0 auto; text-align: center; }}
             #reader {{ width: 100%; height: 230px !important; border-radius: 10px; border: 2px solid #28a745; background-color: #000; overflow: hidden; }}
@@ -79,7 +80,6 @@ def android_camera_scanner():
                 document.getElementById("status-msg").innerText = "🎯 請將 QR Code 對準鏡頭...";
 
                 html5QrCode = new Html5Qrcode("reader");
-
                 const config = {{ fps: 15, qrbox: {{ width: 180, height: 180 }} }};
 
                 html5QrCode.start(
@@ -105,21 +105,20 @@ def android_camera_scanner():
             }}
 
             function sendToParent(val) {{
-                try {{
-                    const url = new URL(window.parent.location.href);
-                    if (url.searchParams.get("seat") !== val) {{
-                        url.searchParams.set("seat", val);
-                        window.parent.location.href = url.href;
-                    }}
-                }} catch (e) {{
-                    console.log(e);
+                if (window.Streamlit) {{
+                    window.Streamlit.setComponentValue(val);
+                }} else {{
+                    window.parent.postMessage({{
+                        type: "streamlit:setComponentValue",
+                        value: val
+                    }}, "*");
                 }}
             }}
         </script>
     </body>
     </html>
     """
-    return components.html(scanner_html, height=290)
+    return components.html(scanner_html, height=290, key=key)
 
 CATEGORY_CONFIG = {
     "上學": {"file": "上學各路線名單.xlsx", "filter": None},
@@ -189,10 +188,9 @@ else:
 
             seat_no = ""
             if input_mode == "📷 Android 相機對焦連刷":
-                url_seat = st.query_params.get("seat", "")
-                if url_seat:
-                    seat_no = clean_seat_number(url_seat)
-                android_camera_scanner()
+                scanned_val = android_camera_scanner(key=f"android_cam_{selected_category}_{selected_route}")
+                if scanned_val:
+                    seat_no = clean_seat_number(scanned_val)
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
