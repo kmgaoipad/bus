@@ -7,6 +7,55 @@ from supabase import create_client, Client
 
 st.set_page_config(page_title="iOS校車驗證", page_icon="🍎", layout="centered")
 
+# CSS 頁面間距優化與 iOS Safe-Area 滾動修復
+st.markdown("""
+    <style>
+        /* 解決 iOS Safari 頂部邊界無法滑動的問題 */
+        html, body, [data-testid="stAppViewContainer"] {
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+        }
+        .block-container {
+            padding-top: 1rem !important;
+            padding-bottom: 2rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+        }
+        h1 {
+            font-size: 1.4rem !important;
+            margin-bottom: 0.3rem !important;
+        }
+        .stAlert {
+            padding: 8px 12px !important;
+            margin-top: 0.3rem !important;
+            margin-bottom: 0.3rem !important;
+        }
+        .route-info {
+            font-size: 0.85rem !important;
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 4px;
+            padding: 4px 8px;
+            margin-bottom: 0.4rem;
+            display: inline-block;
+            width: 100%;
+        }
+        [data-testid="stMetric"] {
+            background-color: #f8f9fa;
+            padding: 4px 8px !important;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.1rem !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.75rem !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # 權限保護：未登入者退回首頁
 if not st.session_state.get("authenticated", False):
     st.warning("⚠️ 請先完成登入！")
@@ -47,8 +96,8 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# 🍎 iOS 專用雙向通訊相機元件
-def custom_ios_qr_scanner():
+# 🍎 iOS 雙向 Bridge 強化版相機組件
+def ios_canvas_scanner():
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
@@ -56,8 +105,8 @@ def custom_ios_qr_scanner():
         <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
         <style>
             #wrapper {{ width: 100%; max-width: 320px; margin: 0 auto; text-align: center; position: relative; }}
-            #canvas-view {{ width: 100%; height: 230px; border-radius: 12px; border: 2px solid #28a745; background-color: #000; object-fit: cover; }}
-            .corner-overlay {{ position: absolute; top: 50%; left: 50%; width: 170px; height: 170px; transform: translate(-50%, -50%); border: 2px dashed #00ff00; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); pointer-events: none; border-radius: 8px; }}
+            #canvas-view {{ width: 100%; height: 210px; border-radius: 12px; border: 2px solid #28a745; background-color: #000; object-fit: cover; }}
+            .corner-overlay {{ position: absolute; top: 50%; left: 50%; width: 160px; height: 160px; transform: translate(-50%, -50%); border: 2px dashed #00ff00; box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); pointer-events: none; border-radius: 8px; }}
             .btn-start {{ background-color: #007bff; color: white; border: none; padding: 12px 22px; font-size: 16px; font-weight: bold; border-radius: 8px; cursor: pointer; box-shadow: 0 3px 6px rgba(0,0,0,0.2); }}
             #status-msg {{ font-size: 13px; color: #333; margin-top: 6px; font-weight: bold; }}
         </style>
@@ -113,11 +162,13 @@ def custom_ios_qr_scanner():
             }}
 
             function sendSeatToPython(seatVal) {{
-                // 100% 能觸發 Streamlit 父頁面接收數值訊息
-                window.parent.postMessage({{
+                // 同時發送 window.parent 與 window.top 的 postMessage，確保 Streamlit 跨層級收到
+                const msgData = {{
                     type: "streamlit:setComponentValue",
                     value: seatVal
-                }}, "*");
+                }};
+                try {{ window.parent.postMessage(msgData, "*"); }} catch (e) {{}}
+                try {{ window.top.postMessage(msgData, "*"); }} catch (e) {{}}
             }}
 
             function renderLoop() {{
@@ -134,7 +185,7 @@ def custom_ios_qr_scanner():
                             let cleanCode = qrCode.data.trim();
                             if (cleanCode !== lastScannedCode) {{
                                 lastScannedCode = cleanCode;
-                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，即刻比對中...";
+                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode;
                                 sendSeatToPython(cleanCode);
                             }}
                         }}
@@ -146,7 +197,7 @@ def custom_ios_qr_scanner():
     </body>
     </html>
     """
-    return components.html(scanner_html, height=290)
+    return components.html(scanner_html, height=270)
 
 CATEGORY_CONFIG = {
     "上學": {"file": "上學各路線名單.xlsx", "filter": None},
@@ -214,23 +265,21 @@ else:
 
             input_mode = st.radio("3. 驗證方式：", ["📷 iPhone 相機對焦連刷", "⌨️ 手動輸入"], horizontal=True)
 
-            seat_no = ""
+            scanned_val = ""
             if input_mode == "📷 iPhone 相機對焦連刷":
-                # 開啟 Canvas 相機組件
-                scanned_val = custom_ios_qr_scanner()
-                if scanned_val:
-                    cleaned_val = clean_seat_number(scanned_val)
-                    if cleaned_val and cleaned_val != st.session_state.get("detected_seat"):
-                        st.session_state["detected_seat"] = cleaned_val
-                        st.rerun()  # 抓到新座號時，強制觸發重新整理並做路線比對
+                scanned_val = ios_canvas_scanner()
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
-                    st.session_state["detected_seat"] = clean_seat_number(raw_input)
+                    scanned_val = raw_input
+
+            # 一旦接收到號碼，寫入 Session State 並做比對
+            cleaned_val = clean_seat_number(scanned_val)
+            if cleaned_val:
+                st.session_state["detected_seat"] = cleaned_val
 
             seat_no = st.session_state.get("detected_seat", "")
 
-            # 4. 進行驗證與結果顯示
             if seat_no:
                 st.divider()
                 student_records = df[df['班級座號'] == seat_no]
