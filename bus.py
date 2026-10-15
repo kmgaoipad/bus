@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from PIL import Image
-from pyzbar.pyzbar import decode
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -29,7 +28,7 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 清理班級座號字串
+# 安全整理班級座號字串
 def clean_seat_number(val):
     if val is None:
         return ""
@@ -40,26 +39,34 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# 解析照片中的 QR Code 內容
+# 使用 OpenCV 原生 QRCodeDetector 解析照片中的 QR Code 內容 (不需 zbar)
 def decode_qr_from_image(image_bytes):
     try:
         image = Image.open(io.BytesIO(image_bytes))
-        # 轉為 OpenCV 格式進行多元解碼
         img_np = np.array(image.convert('RGB'))
         gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
         
-        # 1. 使用 PyZbar 解碼
-        decoded_objects = decode(gray)
-        for obj in decoded_objects:
-            qr_data = obj.data.decode('utf-8').strip()
-            if qr_data:
-                return qr_data
-                
-        # 2. 備用：使用 OpenCV QRCodeDetector 解碼
+        # 使用 OpenCV 內建 QRCodeDetector
         qr_detector = cv2.QRCodeDetector()
+        
+        # 1. 直接檢測與解碼
         data, bbox, _ = qr_detector.detectAndDecode(gray)
         if data:
             return data.strip()
+            
+        # 2. 備用方案：提高對比度再試一次（針對亮光/陰影優化）
+        enhanced = cv2.equalizeHist(gray)
+        data_enh, _, _ = qr_detector.detectAndDecode(enhanced)
+        if data_enh:
+            return data_enh.strip()
+
+        # 3. 多重 QR Code 解碼嘗試
+        retval, decoded_info, _, _ = qr_detector.detectAndDecodeMulti(gray)
+        if retval and decoded_info:
+            for d in decoded_info:
+                if d.strip():
+                    return d.strip()
+
     except Exception:
         pass
     return ""
@@ -280,7 +287,6 @@ else:
             seat_no = ""
 
             if input_mode == "📷 鏡頭拍攝/掃描":
-                # 使用 Streamlit 原生穩定相機（支援 Android / iOS 手機原生權限）
                 camera_img = st.camera_input("對準 QR Code 拍攝：", key=f"cam_{selected_category}_{selected_route}")
                 if camera_img is not None:
                     bytes_data = camera_img.getvalue()
