@@ -51,36 +51,51 @@ def load_users():
     except Exception:
         return None
 
-# 修正 iOS / Android 相機視窗被壓扁問題的全自動掃描元件
-def fixed_camera_qr_scanner(key_name="fixed_cam_scanner"):
+# 專為 iOS Safari 與 Android 最佳化的極速連刷掃描組件 (解決黑屏問題)
+def ios_safari_compatible_qr_scanner(key_name="safari_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
         <style>
-            #reader-container {{
+            #scanner-wrapper {{
                 width: 100%;
                 max-width: 320px;
                 margin: 0 auto;
                 text-align: center;
+                position: relative;
             }}
-            #reader {{
+            #video-canvas-container {{
                 width: 100%;
-                height: 230px !important;
+                height: 220px;
                 border-radius: 10px;
                 border: 2px solid #28a745;
                 background-color: #000;
                 overflow: hidden;
                 position: relative;
             }}
-            #reader video {{
-                object-fit: cover !important;
+            #webcam-video {{
                 width: 100% !important;
                 height: 100% !important;
+                object-fit: cover !important;
+                display: block;
+            }}
+            .scan-line {{
+                position: absolute;
+                top: 0; left: 0;
+                width: 100%; height: 2px;
+                background: #00ff00;
+                box-shadow: 0 0 8px #00ff00;
+                animation: scan 1.8s infinite linear;
+            }}
+            @keyframes scan {{
+                0% {{ top: 5%; }}
+                50% {{ top: 90%; }}
+                100% {{ top: 5%; }}
             }}
             #status-msg {{
-                font-size: 13px;
+                font-size: 12px;
                 color: #444;
                 margin-top: 6px;
                 font-weight: bold;
@@ -100,74 +115,89 @@ def fixed_camera_qr_scanner(key_name="fixed_cam_scanner"):
         </style>
     </head>
     <body style="margin:0; padding:0; background:transparent;">
-        <div id="reader-container">
-            <button id="start-btn" class="btn-start" onclick="activateCam()">📷 點此開啟鏡頭對焦掃描</button>
-            <div id="reader" style="display:none;"></div>
+        <div id="scanner-wrapper">
+            <button id="start-btn" class="btn-start" onclick="startSafariCamera()">📷 點此開啟鏡頭自動連刷</button>
+            <div id="video-canvas-container" style="display:none;">
+                <video id="webcam-video" autoplay playsinline muted></video>
+                <div class="scan-line"></div>
+            </div>
+            <canvas id="hidden-canvas" style="display:none;"></canvas>
             <div id="status-msg"></div>
         </div>
 
         <script>
-            let html5QrCode = null;
+            const video = document.getElementById("webcam-video");
+            const canvas = document.getElementById("hidden-canvas");
+            const ctx = canvas.getContext("2d");
+            const statusMsg = document.getElementById("status-msg");
             let lastScannedCode = "";
+            let isScanning = false;
 
-            function activateCam() {{
+            function startSafariCamera() {{
                 document.getElementById("start-btn").style.display = "none";
-                document.getElementById("reader").style.display = "block";
-                document.getElementById("status-msg").innerText = "🔍 請將 QR Code 對準鏡頭感應...";
+                document.getElementById("video-canvas-container").style.display = "block";
+                statusMsg.innerText = "🔍 請將學生證 QR Code 對準鏡頭...";
 
-                html5QrCode = new Html5Qrcode("reader");
+                // iOS Safari 多層相機連線降級相容機制
+                const constraintsList = [
+                    {{ video: {{ facingMode: {{ exact: "environment" }} }} }},
+                    {{ video: {{ facingMode: "environment" }} }},
+                    {{ video: true }}
+                ];
 
-                const config = {{
-                    fps: 15,
-                    qrbox: {{ width: 180, height: 180 }},
-                    experimentalFeatures: {{
-                        useBarCodeDetectorIfSupported: true
-                    }}
-                }};
+                tryStreamConstraints(constraintsList, 0);
+            }}
 
-                const constraints = {{
-                    facingMode: "environment",
-                    advanced: [{{ focusMode: "continuous" }}]
-                }};
+            function tryStreamConstraints(list, index) {{
+                if (index >= list.length) {{
+                    statusMsg.innerText = "❌ 無法取得鏡頭影像，請確認 Safari / Chrome 已允許權限。";
+                    return;
+                }}
 
-                html5QrCode.start(
-                    constraints,
-                    config,
-                    (decodedText, decodedResult) => {{
-                        if (decodedText && decodedText.trim() !== "") {{
-                            let cleanText = decodedText.trim();
-                            if (cleanText !== lastScannedCode) {{
-                                lastScannedCode = cleanText;
-                                document.getElementById("status-msg").innerText = "⚡ 辨識成功：" + cleanText;
+                navigator.mediaDevices.getUserMedia(list[index])
+                .then(function(stream) {{
+                    video.srcObject = stream;
+                    video.setAttribute("playsinline", "true"); // 解決 iOS 全螢幕視訊問題
+                    video.play();
+                    isScanning = true;
+                    requestAnimationFrame(scanProcess);
+                }})
+                .catch(function(err) {{
+                    console.log("Constraint " + index + " failed, trying next...");
+                    tryStreamConstraints(list, index + 1);
+                }});
+            }}
+
+            function scanProcess() {{
+                if (video.readyState === video.HAVE_ENOUGH_DATA && isScanning) {{
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    
+                    if (typeof jsQR !== 'undefined') {{
+                        const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {{
+                            inversionAttempts: "dontInvert"
+                        }});
+                        
+                        if (qrCode && qrCode.data && qrCode.data.trim() !== "") {{
+                            let cleanCode = qrCode.data.trim();
+                            if (cleanCode !== lastScannedCode) {{
+                                lastScannedCode = cleanCode;
+                                statusMsg.innerText = "⚡ 讀取座號：" + cleanCode;
                                 
                                 window.parent.postMessage({{
                                     type: "streamlit:setComponentValue",
-                                    value: cleanText
+                                    value: cleanCode
                                 }}, "*");
                             }}
                         }}
                     }}
-                ).catch(err => {{
-                    // 若後置對焦約束失敗，降級調用預設後置鏡頭
-                    html5QrCode.start(
-                        {{ facingMode: "environment" }},
-                        config,
-                        (decodedText) => {{
-                            if (decodedText && decodedText.trim() !== "") {{
-                                let cleanText = decodedText.trim();
-                                if (cleanText !== lastScannedCode) {{
-                                    lastScannedCode = cleanText;
-                                    window.parent.postMessage({{
-                                        type: "streamlit:setComponentValue",
-                                        value: cleanText
-                                    }}, "*");
-                                }}
-                            }}
-                        }}
-                    ).catch(err2 => {{
-                        document.getElementById("status-msg").innerText = "❌ 相機開啟失敗，請確認已允許相機權限；若在 LINE 中請以 Chrome/Safari 開啟。";
-                    }});
-                }});
+                }}
+                if (isScanning) {{
+                    requestAnimationFrame(scanProcess);
+                }}
             }}
         </script>
     </body>
@@ -379,7 +409,7 @@ else:
             input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭對焦自動連刷", "⌨️ 手動輸入"], horizontal=True)
 
             if input_mode == "📷 鏡頭對焦自動連刷":
-                scanned_val = fixed_camera_qr_scanner(key_name=f"fixed_cam_{selected_category}_{selected_route}")
+                scanned_val = ios_safari_compatible_qr_scanner(key_name=f"safari_scan_{selected_category}_{selected_route}")
                 if scanned_val:
                     cleaned_str = clean_seat_number(scanned_val)
                     if cleaned_str and cleaned_str != st.session_state["detected_seat"]:
