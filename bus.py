@@ -214,7 +214,7 @@ if st.session_state["is_admin"]:
 
     st.subheader(f"📋 登入紀錄列表（共 {len(records)} 筆）")
 
-    # 1. 一鍵刪除全部記錄
+    # 1. 刪除全部記錄按鈕
     if st.button("🗑️ 刪除全部記錄", type="primary"):
         try:
             all_ids = [r["id"] for r in records]
@@ -226,61 +226,66 @@ if st.session_state["is_admin"]:
 
     st.write("")
 
-    # 2. 勾選多筆/單筆刪除表單
-    with st.form("delete_form"):
-        selected_ids = []
+    # 初始化勾選狀態存儲區
+    if "selected_delete_ids" not in st.session_state:
+        st.session_state["selected_delete_ids"] = set()
+
+    # 表頭
+    h1, h2, h3, h4, h5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
+    h1.write("**選取**")
+    h2.write("**使用者資訊**")
+    h3.write("**登入時間**")
+    h4.write("**選擇路線**")
+    h5.write("**操作**")
+    st.divider()
+
+    # 逐筆顯示資料列（不在 st.form 內，解決鍵值與表單衝突）
+    for row in records:
+        rec_id = row["id"]
+        c1, c2, c3, c4, c5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
         
-        # 標題列
-        h1, h2, h3, h4, h5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
-        h1.write("**選取**")
-        h2.write("**使用者資訊**")
-        h3.write("**登入時間**")
-        h4.write("**選擇路線**")
-        h5.write("**操作**")
-        st.divider()
+        # 勾選框（加上唯一 key）
+        is_chk = c1.checkbox("", key=f"chk_{rec_id}")
+        if is_chk:
+            st.session_state["selected_delete_ids"].add(rec_id)
+        else:
+            st.session_state["selected_delete_ids"].discard(rec_id)
+            
+        c2.write(row.get("user_email", "未知"))
+        
+        # 時間格式整理
+        raw_time = row.get("login_time", "無記錄")
+        formatted_time = raw_time.replace("T", " ")[:19] if raw_time else "無紀錄"
+        c3.write(formatted_time)
+        
+        c4.write(row.get("route_selected", "未選擇"))
+        
+        # 單筆刪除按鈕（加上唯一的 key 避免衝突）
+        if c5.button("❌ 刪除", key=f"del_btn_{rec_id}"):
+            try:
+                supabase.table("usage_logs").delete().eq("id", rec_id).execute()
+                st.success(f"已刪除 ID: {rec_id} 的記錄")
+                st.rerun()
+            except Exception as e:
+                st.error(f"刪除失敗：{e}")
 
-        # 逐筆顯示資料列
-        for row in records:
-            c1, c2, c3, c4, c5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
-            
-            # 多選框
-            if c1.checkbox("", key=f"chk_{row['id']}"):
-                selected_ids.append(row["id"])
-                
-            c2.write(row.get("user_email", "未知"))
-            
-            # 時間格式整理
-            raw_time = row.get("login_time", "無記錄")
-            formatted_time = raw_time.replace("T", " ")[:19] if raw_time else "無紀錄"
-            c3.write(formatted_time)
-            
-            c4.write(row.get("route_selected", "未選擇"))
-            
-            # 單筆刪除按鈕
-            if c5.form_submit_button("❌ 刪除"):
-                try:
-                    supabase.table("usage_logs").delete().eq("id", row["id"]).execute()
-                    st.success(f"已刪除 ID: {row['id']} 的記錄")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"刪除失敗：{e}")
+    st.divider()
 
-        st.divider()
-        # 批次/部份刪除按鈕
-        submit_batch = st.form_submit_button("🗑️ 刪除勾選項目（部份刪除）")
-        if submit_batch:
-            if selected_ids:
-                try:
-                    supabase.table("usage_logs").delete().in_("id", selected_ids).execute()
-                    st.success(f"已成功刪除 {len(selected_ids)} 筆記錄！")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"刪除失敗：{e}")
-            else:
-                st.warning("⚠️ 請先勾選要刪除的記錄。")
+    # 部分刪除按鈕
+    if st.button("🗑️ 刪除勾選項目（部份刪除）", type="secondary"):
+        selected_ids = list(st.session_state["selected_delete_ids"])
+        if selected_ids:
+            try:
+                supabase.table("usage_logs").delete().in_("id", selected_ids).execute()
+                st.session_state["selected_delete_ids"].clear()
+                st.success(f"已成功刪除 {len(selected_ids)} 筆記錄！")
+                st.rerun()
+            except Exception as e:
+                st.error(f"刪除失敗：{e}")
+        else:
+            st.warning("⚠️ 請先勾選要刪除的記錄。")
 
     st.stop()
-
 # ---------------------------------------------------------
 # 🚌 一般使用者：主系統畫面
 # ---------------------------------------------------------
