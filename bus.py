@@ -3,19 +3,19 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from supabase import create_client, Client
+from streamlit_qrcode_scanner import qrcode_scanner
 
+# 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
 USER_FILE = "校車驗證系統使用者名單.xlsx"
 
 # 1. Supabase 連線設定
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
 
 @st.cache_resource
 def init_supabase():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return None
     try:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
@@ -23,18 +23,16 @@ def init_supabase():
 
 supabase = init_supabase()
 
+# 整理班級座號字串（處理 float 自動補 .0 的問題）
 def clean_seat_number(val):
-    if val is None:
+    if pd.isna(val):
         return ""
-    if not isinstance(val, (str, int, float)):
-        return ""
-    val_str = str(val).strip()
-    if not val_str or "DeltaGenerator" in val_str:
-        return ""
-    if val_str.endswith('.0'):
-        val_str = val_str[:-2]
-    return val_str
+    s = str(val).strip()
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
 
+# 讀取使用者名單 Excel
 @st.cache_data
 def load_users():
     if not os.path.exists(USER_FILE):
@@ -47,6 +45,53 @@ def load_users():
     except Exception:
         return None
 
+# CSS 樣式設定
+st.markdown("""
+    <style>
+        .block-container {
+            padding-top: 2rem !important;
+            padding-bottom: 1.5rem !important;
+            padding-left: 0.8rem !important;
+            padding-right: 0.8rem !important;
+        }
+        h1 {
+            font-size: 1.4rem !important;
+            margin-bottom: 0.3rem !important;
+        }
+        iframe[title*="qrcode_scanner"] {
+            max-height: 220px !important;
+        }
+        .stAlert {
+            padding: 8px 12px !important;
+            margin-top: 0.3rem !important;
+            margin-bottom: 0.3rem !important;
+        }
+        .route-info {
+            font-size: 0.85rem !important;
+            color: #155724;
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            border-radius: 4px;
+            padding: 4px 8px;
+            margin-bottom: 0.4rem;
+            display: inline-block;
+            width: 100%;
+        }
+        [data-testid="stMetric"] {
+            background-color: #f8f9fa;
+            padding: 4px 8px !important;
+            border-radius: 6px;
+            border: 1px solid #e9ecef;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.1rem !important;
+        }
+        [data-testid="stMetricLabel"] {
+            font-size: 0.75rem !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 # 初始化 Session State
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -58,13 +103,14 @@ if "log_id" not in st.session_state:
     st.session_state["log_id"] = None
 
 # ---------------------------------------------------------
-# 🔒 1. 登入畫面
+# 🔒 登入驗證畫面
 # ---------------------------------------------------------
 if not st.session_state["authenticated"]:
     st.title("🔒 KMSH 校車驗證系統 - 登入")
     st.caption("請輸入使用者編號與密碼。")
     
     df_users = load_users()
+    
     if df_users is None:
         st.error(f"❌ 找不到使用者名單檔案 (`{USER_FILE}`)，請確認檔案已上傳！")
         st.stop()
@@ -100,46 +146,143 @@ if not st.session_state["authenticated"]:
                         except Exception:
                             pass
                             
-                    st.success(f"✅ 歡迎 {st.session_state['user_name']}，請選擇您的裝置類型進入系統...")
+                    st.success(f"✅ 歡迎 {st.session_state['user_name']}，正在進入系統...")
                     st.rerun()
                 else:
                     st.error("❌ 登入失敗：使用者編號或密碼錯誤，請重新確認。")
     st.stop()
 
 # ---------------------------------------------------------
-# 📱 2. 裝置選單頁面 (驗證通過後)
+# 🚌 主系統畫面
 # ---------------------------------------------------------
-st.title("🚌 KMSH 校車驗證系統")
-st.write(f"👤 當前登入者：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
-st.divider()
 
-st.subheader("請點選您的手機裝置類型進入驗證頁面：")
+with st.sidebar:
+    st.write(f"👤 當前使用者：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
+    if st.button("🚪 安全登出"):
+        if st.session_state["log_id"] and supabase:
+            try:
+                supabase.table("usage_logs").update({
+                    "logout_time": datetime.now().isoformat()
+                }).eq("id", st.session_state["log_id"]).execute()
+            except Exception:
+                pass
+                
+        st.session_state["authenticated"] = False
+        st.session_state["user_id"] = ""
+        st.session_state["user_name"] = ""
+        st.session_state["log_id"] = None
+        st.rerun()
 
-col1, col2 = st.columns(2)
+CATEGORY_CONFIG = {
+    "上學": {"file": "上學各路線名單.xlsx", "filter": None},
+    "大放學 (第1梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放1"},
+    "大放學 (第2梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放2"},
+    "週一小放學 (第1梯)": {"file": "週1小放學1梯各路線名單.xlsx", "filter": None},
+    "週一小放學 (第2梯)": {"file": "週1小放學2梯各路線名單.xlsx", "filter": None},
+    "週二小放學 (第1梯)": {"file": "週2小放學1梯各路線名單.xlsx", "filter": None},
+    "週二小放學 (第2梯)": {"file": "週2小放學2梯各路線名單.xlsx", "filter": None},
+    "週三小放學": {"file": "週3小放學各路線名單.xlsx", "filter": None},
+    "週四小放學 (第1梯)": {"file": "週4小放學1梯各路線名單.xlsx", "filter": None},
+    "週四小放學 (第2梯)": {"file": "週4小放學2梯各路線名單.xlsx", "filter": None},
+    "週五小放學": {"file": "週5小放學各路線名單.xlsx", "filter": None},
+    "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
+}
 
-with col1:
-    st.info("### 🍎 iPhone / iPad")
-    st.caption("針對 Safari 瀏覽器優化 Canvas 相機防黑屏技術。")
-    if st.button("進入 🍎 iOS 驗證頁面", use_container_width=True):
-        st.switch_page("pages/1_iOS.py")
+@st.cache_data
+def load_category_data(file_path, prefix_filter=None):
+    if not os.path.exists(file_path):
+        return None, None
+        
+    xls = pd.ExcelFile(file_path)
+    all_dfs = []
+    
+    target_sheets = xls.sheet_names
+    if prefix_filter:
+        target_sheets = [s for s in xls.sheet_names if s.startswith(prefix_filter)]
+        
+    for sheet_name in target_sheets:
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+        df['路線名稱'] = sheet_name.strip()
+        all_dfs.append(df)
+        
+    if not all_dfs:
+        return None, None
+        
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+    
+    # 統一清理「班級座號」格式，避免 .0 影響比對
+    combined_df['班級座號'] = combined_df['班級座號'].apply(clean_seat_number)
+    
+    return combined_df, target_sheets
 
-with col2:
-    st.success("### 🤖 Android 手機")
-    st.caption("針對 Chrome 瀏覽器優化 Html5Qrcode 相機硬體引擎。")
-    if st.button("進入 🤖 Android 驗證頁面", use_container_width=True):
-        st.switch_page("pages/2_Android.py")
+st.title("🚌 KMSH校車驗證系統")
 
-st.divider()
-if st.button("🚪 安全登出系統"):
-    if st.session_state["log_id"] and supabase:
-        try:
-            supabase.table("usage_logs").update({
-                "logout_time": datetime.now().isoformat()
-            }).eq("id", st.session_state["log_id"]).execute()
-        except Exception:
-            pass
-    st.session_state["authenticated"] = False
-    st.session_state["user_id"] = ""
-    st.session_state["user_name"] = ""
-    st.session_state["log_id"] = None
-    st.rerun()
+# 1. 選擇時段類別
+category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
+selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
+
+if selected_category == "-- 請選擇時段/類別 --":
+    st.warning("👈 請先選擇時段/類別。")
+else:
+    config = CATEGORY_CONFIG[selected_category]
+    df, route_list = load_category_data(config["file"], config["filter"])
+
+    if df is None:
+        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認檔案已上傳！")
+    else:
+        # 2. 選擇車輛路線
+        route_options = ["-- 請點此選擇路線 --"] + list(route_list)
+        selected_route = st.selectbox("2. 請選擇車輛路線：", route_options, index=0)
+
+        if selected_route == "-- 請點此選擇路線 --":
+            st.warning("👈 請選擇當前路線以開啟核對功能。")
+        else:
+            # 紀錄選擇路線至紀錄表
+            if st.session_state["log_id"] and supabase:
+                try:
+                    supabase.table("usage_logs").update({
+                        "route_selected": f"{selected_category} - {selected_route}"
+                    }).eq("id", st.session_state["log_id"]).execute()
+                except Exception:
+                    pass
+
+            st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
+
+            # 3. 驗證方式選擇
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
+
+            seat_no = ""
+
+            if input_mode == "📷 鏡頭掃描":
+                qr_code_val = qrcode_scanner(key=f"bus_qr_scanner_{selected_category}_{selected_route}")
+                if qr_code_val:
+                    seat_no = clean_seat_number(qr_code_val)
+            else:
+                raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
+                seat_no = clean_seat_number(raw_input)
+
+            # 4. 進行驗證與結果顯示
+            if seat_no:
+                student_records = df[df['班級座號'] == seat_no]
+                st.divider()
+                
+                if not student_records.empty:
+                    student_info = student_records.iloc[0]
+                    actual_route = student_info['路線名稱']
+                    student_name = student_info['學生姓名']
+                    
+                    # 相容「放學站名/上學站名」與「放學站號/上學站號」欄位
+                    station_name = student_info.get('放學站名') or student_info.get('上學站名') or "未設定"
+                    station_no = student_info.get('放學站號') or student_info.get('上學站號') or "未設定"
+                    
+                    if selected_route == actual_route:
+                        st.success(f"✅ **准予上車！【{student_name}】**")
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("姓名", student_name)
+                        col2.metric("座號", seat_no)
+                        col3.metric("站名", f"{station_name} ({station_no})")
+                    else:
+                        st.error(f"🚫 **警告！【{student_name}】搭錯車！**")
+                        st.warning(f"⚠️ 應搭乘：**【{actual_route}】** ｜ 站名：{station_name} ({station_no})")
+                else:
+                    st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
