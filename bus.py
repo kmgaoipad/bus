@@ -23,6 +23,22 @@ USER_FILE = "校車驗證系統使用者名單.xlsx"
 ADMIN_USER = "kmsh"
 ADMIN_PASS = "kmsh"
 
+# 路線類別與檔案對應設定
+CATEGORY_CONFIG = {
+    "上學": {"file": "上學各路線名單.xlsx", "filter": None},
+    "大放學 (第1梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放1"},
+    "大放學 (第2梯)": {"file": "大放學12各路線名單.xlsx", "filter": "大放2"},
+    "週一小放學 (第1梯)": {"file": "週1小放學1梯各路線名單.xlsx", "filter": None},
+    "週一小放學 (第2梯)": {"file": "週1小放學2梯各路線名單.xlsx", "filter": None},
+    "週二小放學 (第1梯)": {"file": "週2小放學1梯各路線名單.xlsx", "filter": None},
+    "週二小放學 (第2梯)": {"file": "週2小放學2梯各路線名單.xlsx", "filter": None},
+    "週三小放學": {"file": "週3小放學各路線名單.xlsx", "filter": None},
+    "週四小放學 (第1梯)": {"file": "週4小放學1梯各路線名單.xlsx", "filter": None},
+    "週四小放學 (第2梯)": {"file": "週4小放學2梯各路線名單.xlsx", "filter": None},
+    "週五小放學": {"file": "週5小放學各路線名單.xlsx", "filter": None},
+    "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
+}
+
 # 1. Supabase 連線設定
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
@@ -57,6 +73,31 @@ def load_users():
         return df_users
     except Exception:
         return None
+
+@st.cache_data
+def load_category_data(file_path, prefix_filter=None):
+    if not os.path.exists(file_path):
+        return None, None
+        
+    xls = pd.ExcelFile(file_path)
+    all_dfs = []
+    
+    target_sheets = xls.sheet_names
+    if prefix_filter:
+        target_sheets = [s for s in xls.sheet_names if s.startswith(prefix_filter)]
+        
+    for sheet_name in target_sheets:
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+        df['路線名稱'] = sheet_name.strip()
+        all_dfs.append(df)
+        
+    if not all_dfs:
+        return None, None
+        
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+    combined_df['班級座號'] = combined_df['班級座號'].apply(clean_seat_number)
+    
+    return combined_df, target_sheets
 
 # CSS 樣式設定
 st.markdown("""
@@ -135,7 +176,7 @@ if not st.session_state["authenticated"]:
             if not user_input or not password_input:
                 st.error("請輸入帳號與密碼！")
             else:
-                # 1. 檢查是否為管理者登入 (kmsh / kmsh)
+                # 1. 管理者登入
                 if user_input == ADMIN_USER and password_input == ADMIN_PASS:
                     st.session_state["authenticated"] = True
                     st.session_state["is_admin"] = True
@@ -144,7 +185,7 @@ if not st.session_state["authenticated"]:
                     st.success("✅ 管理者登入成功！")
                     st.rerun()
                 
-                # 2. 檢查一般使用者登入 (比對 Excel 名單)
+                # 2. 一般使用者登入
                 elif df_users is not None:
                     matched_user = df_users[
                         ((df_users["使用者編號"] == user_input) | (df_users["使用者姓名"] == user_input)) & 
@@ -158,7 +199,6 @@ if not st.session_state["authenticated"]:
                         st.session_state["user_id"] = str(user_info["使用者編號"])
                         st.session_state["user_name"] = str(user_info["使用者姓名"])
                         
-                        # 紀錄使用者登入至 Supabase
                         if supabase:
                             try:
                                 log_res = supabase.table("usage_logs").insert({
@@ -179,7 +219,7 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ---------------------------------------------------------
-# 🛠️ 管理者畫面 (當 is_admin 為 True 時)
+# 🛠️ 管理者畫面
 # ---------------------------------------------------------
 if st.session_state["is_admin"]:
     st.title("🛠️ 管理者後台 - 登入記錄管理")
@@ -214,7 +254,6 @@ if st.session_state["is_admin"]:
 
     st.subheader(f"📋 登入紀錄列表（共 {len(records)} 筆）")
 
-    # 1. 刪除全部記錄按鈕
     if st.button("🗑️ 刪除全部記錄", type="primary"):
         try:
             all_ids = [r["id"] for r in records]
@@ -226,11 +265,9 @@ if st.session_state["is_admin"]:
 
     st.write("")
 
-    # 初始化勾選狀態存儲區
     if "selected_delete_ids" not in st.session_state:
         st.session_state["selected_delete_ids"] = set()
 
-    # 表頭
     h1, h2, h3, h4, h5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
     h1.write("**選取**")
     h2.write("**使用者資訊**")
@@ -239,12 +276,10 @@ if st.session_state["is_admin"]:
     h5.write("**操作**")
     st.divider()
 
-    # 逐筆顯示資料列（不在 st.form 內，解決鍵值與表單衝突）
     for row in records:
         rec_id = row["id"]
         c1, c2, c3, c4, c5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
         
-        # 勾選框（加上唯一 key）
         is_chk = c1.checkbox("", key=f"chk_{rec_id}")
         if is_chk:
             st.session_state["selected_delete_ids"].add(rec_id)
@@ -253,14 +288,12 @@ if st.session_state["is_admin"]:
             
         c2.write(row.get("user_email", "未知"))
         
-        # 時間格式整理
         raw_time = row.get("login_time", "無記錄")
         formatted_time = raw_time.replace("T", " ")[:19] if raw_time else "無紀錄"
         c3.write(formatted_time)
         
         c4.write(row.get("route_selected", "未選擇"))
         
-        # 單筆刪除按鈕（加上唯一的 key 避免衝突）
         if c5.button("❌ 刪除", key=f"del_btn_{rec_id}"):
             try:
                 supabase.table("usage_logs").delete().eq("id", rec_id).execute()
@@ -271,7 +304,6 @@ if st.session_state["is_admin"]:
 
     st.divider()
 
-    # 部分刪除按鈕
     if st.button("🗑️ 刪除勾選項目（部份刪除）", type="secondary"):
         selected_ids = list(st.session_state["selected_delete_ids"])
         if selected_ids:
@@ -286,11 +318,11 @@ if st.session_state["is_admin"]:
             st.warning("⚠️ 請先勾選要刪除的記錄。")
 
     st.stop()
+
 # ---------------------------------------------------------
-# 🚌 一般使用者：主系統畫面（含頂部登出列）
+# 🚌 一般使用者：主系統畫面
 # ---------------------------------------------------------
 
-# 1. 頁面頂部：系統標題與登出列
 col_title, col_user_info = st.columns([2, 1])
 
 with col_title:
@@ -299,7 +331,6 @@ with col_title:
 with col_user_info:
     st.write(f"👤 **{st.session_state['user_name']}** ({st.session_state['user_id']})")
     if st.button("🚪 安全登出", type="secondary", use_container_width=True):
-        # 紀錄登出時間至 Supabase
         if st.session_state["log_id"] and supabase:
             try:
                 supabase.table("usage_logs").update({
@@ -308,7 +339,6 @@ with col_user_info:
             except Exception:
                 pass
                 
-        # 清除登入狀態並重置
         st.session_state["authenticated"] = False
         st.session_state["is_admin"] = False
         st.session_state["user_id"] = ""
@@ -318,7 +348,7 @@ with col_user_info:
 
 st.divider()
 
-# 2. 選擇時段類別
+# 1. 選擇時段類別
 category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
 selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
 
@@ -331,7 +361,7 @@ else:
     if df is None:
         st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認檔案已上傳！")
     else:
-        # 3. 選擇車輛路線
+        # 2. 選擇車輛路線
         route_options = ["-- 請點此選擇路線 --"] + list(route_list)
         selected_route = st.selectbox("2. 請選擇車輛路線：", route_options, index=0)
 
@@ -349,7 +379,7 @@ else:
 
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
-            # 4. 驗證方式選擇
+            # 3. 驗證方式選擇
             input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
 
             seat_no = ""
@@ -362,7 +392,7 @@ else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 seat_no = clean_seat_number(raw_input)
 
-            # 5. 進行驗證與結果顯示
+            # 4. 進行驗證與結果顯示
             if seat_no:
                 student_records = df[df['班級座號'] == seat_no]
                 st.divider()
