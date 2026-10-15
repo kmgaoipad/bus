@@ -107,7 +107,7 @@ if not st.session_state["authenticated"]:
     st.stop()
 
 # ---------------------------------------------------------
-# 📱 2. 裝置選單頁面 (通聯成功後)
+# 📱 2. 裝置選單頁面 (驗證通過後)
 # ---------------------------------------------------------
 st.title("🚌 KMSH 校車驗證系統")
 st.write(f"👤 當前登入者：**{st.session_state['user_name']} ({st.session_state['user_id']})**")
@@ -121,13 +121,13 @@ with col1:
     st.info("### 🍎 iPhone / iPad")
     st.caption("針對 Safari 瀏覽器優化 Canvas 相機防黑屏技術。")
     if st.button("進入 🍎 iOS 驗證頁面", use_container_width=True):
-        st.switch_page("pages/1_iOS驗證.py")
+        st.switch_page("pages/1_iOS.py")
 
 with col2:
     st.success("### 🤖 Android 手機")
     st.caption("針對 Chrome 瀏覽器優化 Html5Qrcode 相機硬體引擎。")
     if st.button("進入 🤖 Android 驗證頁面", use_container_width=True):
-        st.switch_page("pages/2_Android驗證.py")
+        st.switch_page("pages/2_Android.py")
 
 st.divider()
 if st.button("🚪 安全登出系統"):
