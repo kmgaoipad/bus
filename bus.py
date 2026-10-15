@@ -51,15 +51,15 @@ def load_users():
     except Exception:
         return None
 
-# 自動對焦 Focus + 無中斷自動連續掃描元件
-def auto_focus_live_qr_scanner(key_name="auto_focus_scanner"):
+# 修正 iOS / Android 相機視窗被壓扁問題的全自動掃描元件
+def fixed_camera_qr_scanner(key_name="fixed_cam_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
         <style>
-            #reader-wrapper {{
+            #reader-container {{
                 width: 100%;
                 max-width: 320px;
                 margin: 0 auto;
@@ -67,51 +67,72 @@ def auto_focus_live_qr_scanner(key_name="auto_focus_scanner"):
             }}
             #reader {{
                 width: 100%;
-                border-radius: 8px;
+                height: 230px !important;
+                border-radius: 10px;
                 border: 2px solid #28a745;
-                overflow: hidden;
                 background-color: #000;
+                overflow: hidden;
+                position: relative;
             }}
             #reader video {{
                 object-fit: cover !important;
                 width: 100% !important;
-                height: 200px !important;
+                height: 100% !important;
             }}
             #status-msg {{
-                font-size: 12px;
-                color: #555;
-                margin-top: 4px;
+                font-size: 13px;
+                color: #444;
+                margin-top: 6px;
+                font-weight: bold;
+            }}
+            .btn-start {{
+                background-color: #28a745;
+                color: white;
+                border: none;
+                padding: 10px 18px;
+                font-size: 15px;
+                font-weight: bold;
+                border-radius: 6px;
+                cursor: pointer;
+                margin-bottom: 8px;
+                box-shadow: 0 2px 5px rgba(0,0,0,0.2);
             }}
         </style>
     </head>
     <body style="margin:0; padding:0; background:transparent;">
-        <div id="reader-wrapper">
-            <div id="reader"></div>
-            <div id="status-msg">📷 鏡頭對焦中，對準 QR Code 自動辨識...</div>
+        <div id="reader-container">
+            <button id="start-btn" class="btn-start" onclick="activateCam()">📷 點此開啟鏡頭對焦掃描</button>
+            <div id="reader" style="display:none;"></div>
+            <div id="status-msg"></div>
         </div>
 
         <script>
-            let html5QrCode = new Html5Qrcode("reader");
+            let html5QrCode = null;
             let lastScannedCode = "";
 
-            const cameraConfig = {{
-                fps: 15,
-                qrbox: {{ width: 200, height: 200 }},
-                aspectRatio: 1.0,
-                experimentalFeatures: {{
-                    useBarCodeDetectorIfSupported: true
-                }}
-            }};
+            function activateCam() {{
+                document.getElementById("start-btn").style.display = "none";
+                document.getElementById("reader").style.display = "block";
+                document.getElementById("status-msg").innerText = "🔍 請將 QR Code 對準鏡頭感應...";
 
-            const cameraConstraints = {{
-                facingMode: "environment",
-                advanced: [{{ focusMode: "continuous" }}]
-            }};
+                html5QrCode = new Html5Qrcode("reader");
 
-            function startContinuousScanner() {{
+                const config = {{
+                    fps: 15,
+                    qrbox: {{ width: 180, height: 180 }},
+                    experimentalFeatures: {{
+                        useBarCodeDetectorIfSupported: true
+                    }}
+                }};
+
+                const constraints = {{
+                    facingMode: "environment",
+                    advanced: [{{ focusMode: "continuous" }}]
+                }};
+
                 html5QrCode.start(
-                    cameraConstraints,
-                    cameraConfig,
+                    constraints,
+                    config,
                     (decodedText, decodedResult) => {{
                         if (decodedText && decodedText.trim() !== "") {{
                             let cleanText = decodedText.trim();
@@ -127,9 +148,10 @@ def auto_focus_live_qr_scanner(key_name="auto_focus_scanner"):
                         }}
                     }}
                 ).catch(err => {{
+                    // 若後置對焦約束失敗，降級調用預設後置鏡頭
                     html5QrCode.start(
                         {{ facingMode: "environment" }},
-                        cameraConfig,
+                        config,
                         (decodedText) => {{
                             if (decodedText && decodedText.trim() !== "") {{
                                 let cleanText = decodedText.trim();
@@ -143,17 +165,15 @@ def auto_focus_live_qr_scanner(key_name="auto_focus_scanner"):
                             }}
                         }}
                     ).catch(err2 => {{
-                        document.getElementById("status-msg").innerText = "❌ 相機開啟失敗，請允許相機權限；若在 LINE 中請以 Chrome 開啟。";
+                        document.getElementById("status-msg").innerText = "❌ 相機開啟失敗，請確認已允許相機權限；若在 LINE 中請以 Chrome/Safari 開啟。";
                     }});
                 }});
             }}
-
-            startContinuousScanner();
         </script>
     </body>
     </html>
     """
-    return components.html(scanner_html, height=240)
+    return components.html(scanner_html, height=290)
 
 # CSS 樣式設定
 st.markdown("""
@@ -359,7 +379,7 @@ else:
             input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭對焦自動連刷", "⌨️ 手動輸入"], horizontal=True)
 
             if input_mode == "📷 鏡頭對焦自動連刷":
-                scanned_val = auto_focus_live_qr_scanner(key_name=f"focus_scan_{selected_category}_{selected_route}")
+                scanned_val = fixed_camera_qr_scanner(key_name=f"fixed_cam_{selected_category}_{selected_route}")
                 if scanned_val:
                     cleaned_str = clean_seat_number(scanned_val)
                     if cleaned_str and cleaned_str != st.session_state["detected_seat"]:
