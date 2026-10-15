@@ -3,5 +3,3 @@ pandas
 openpyxl
 requests
 supabase
-opencv-python-headless
-pillow
