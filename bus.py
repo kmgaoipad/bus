@@ -11,11 +11,13 @@ st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout
 USER_FILE = "校車驗證系統使用者名單.xlsx"
 
 # 1. Supabase 連線設定
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 
 @st.cache_resource
 def init_supabase():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
     try:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
@@ -49,100 +51,161 @@ def load_users():
     except Exception:
         return None
 
-# Android & iOS 全自動相容鏡頭掃描元件
-def android_ios_live_qr_scanner(key_name="live_qr"):
+# 原生 HTML5 BarcodeDetector + WebRTC 超級相容即時掃描組件
+def android_certified_live_qr_scanner(key_name="auto_scanner"):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <script type="text/javascript" src="https://rawgit.com/schmich/instascan-builds/master/instascan.min.js"></script>
+        <meta charset="utf-8">
+        <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
         <style>
-            #scanner-container {{
-                position: relative;
+            #scanner-card {{
                 width: 100%;
                 max-width: 320px;
                 margin: 0 auto;
                 text-align: center;
+                position: relative;
             }}
-            #preview {{
+            #v-element {{
                 width: 100%;
-                height: 220px;
+                height: 210px;
                 object-fit: cover;
                 border-radius: 8px;
                 border: 2px solid #007bff;
                 background-color: #000;
+                display: none;
             }}
-            .scan-line {{
+            .laser {{
                 position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 2px;
+                top: 0; left: 0;
+                width: 100%; height: 2px;
                 background: #00ff00;
-                box-shadow: 0 0 8px #00ff00;
-                animation: scan 2s infinite linear;
+                box-shadow: 0 0 10px #00ff00;
+                animation: scan 1.8s infinite linear;
+                display: none;
             }}
             @keyframes scan {{
-                0% {{ top: 0%; }}
-                50% {{ top: 95%; }}
-                100% {{ top: 0%; }}
+                0% {{ top: 5%; }}
+                50% {{ top: 90%; }}
+                100% {{ top: 5%; }}
             }}
-            #status-text {{
-                font-size: 12px;
+            .start-btn {{
+                background-color: #007bff;
+                color: #fff;
+                border: none;
+                padding: 12px 24px;
+                font-size: 16px;
+                font-weight: bold;
+                border-radius: 8px;
+                cursor: pointer;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            }}
+            #status-msg {{
+                font-size: 13px;
                 color: #666;
-                margin-top: 4px;
+                margin-top: 6px;
             }}
         </style>
     </head>
     <body style="margin:0; padding:0; background:transparent;">
-        <div id="scanner-container">
-            <video id="preview" playsinline></video>
-            <div class="scan-line"></div>
-            <div id="status-text">相機初始化中...</div>
+        <div id="scanner-card">
+            <button id="btn-activate" class="start-btn" onclick="initAndroidCamera()">📷 點此開啟鏡頭即時自動掃描</button>
+            <div id="cam-display">
+                <video id="v-element" autoplay playsinline muted></video>
+                <div id="laser-line" class="laser"></div>
+            </div>
+            <canvas id="c-element" style="display:none;"></canvas>
+            <div id="status-msg"></div>
         </div>
 
-        <script type="text/javascript">
-            let scanner = new Instascan.Scanner({{ 
-                video: document.getElementById('preview'),
-                scanPeriod: 5,
-                mirror: false
-            }});
+        <script>
+            const video = document.getElementById('v-element');
+            const canvas = document.getElementById('c-element');
+            const ctx = canvas.getContext('canvas' in document ? '2d' : null);
+            const btn = document.getElementById('btn-activate');
+            const laser = document.getElementById('laser-line');
+            const status = document.getElementById('status-msg');
+            let isRunning = false;
 
-            scanner.addListener('scan', function (content) {{
-                if (content && content.trim() !== '') {{
-                    let seatNo = content.trim();
-                    window.parent.postMessage({{
-                        type: "streamlit:setComponentValue",
-                        value: seatNo
-                    }}, "*");
-                }}
-            }});
+            function initAndroidCamera() {{
+                btn.style.display = 'none';
+                video.style.display = 'block';
+                laser.style.display = 'block';
+                status.innerText = "🔍 請對準學生證 QR Code...";
 
-            Instascan.Camera.getCameras().then(function (cameras) {{
-                let statusEl = document.getElementById('status-text');
-                if (cameras.length > 0) {{
-                    statusEl.innerText = "相機運作中（自動對準 QR Code）";
-                    // 優先使用最後一個鏡頭 (通常是 Android/iOS 後置鏡頭)
-                    let selectedCam = cameras[cameras.length - 1];
-                    for (let i = 0; i < cameras.length; i++) {{
-                        if (cameras[i].name && cameras[i].name.toLowerCase().includes('back')) {{
-                            selectedCam = cameras[i];
-                            break;
+                const constraints = {{
+                    video: {{
+                        facingMode: {{ exact: "environment" }},
+                        width: {{ ideal: 1280 }},
+                        height: {{ ideal: 720 }}
+                    }}
+                }};
+
+                // 先嘗試強制開啟後置主鏡頭
+                navigator.mediaDevices.getUserMedia(constraints)
+                .then(startStream)
+                .catch(err => {{
+                    // 若 exact environment 失敗 (部分 Android 機型)，降級為一般攝影機請求
+                    navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: "environment" }} }})
+                    .then(startStream)
+                    .catch(err2 => {{
+                        navigator.mediaDevices.getUserMedia({{ video: true }})
+                        .then(startStream)
+                        .catch(err3 => {{
+                            status.innerText = "❌ 無法開啟相機，請確認瀏覽器相機權限；若在 LINE 中請用 Chrome 開啟。";
+                        }});
+                    }});
+                }});
+            }}
+
+            function startStream(stream) {{
+                video.srcObject = stream;
+                video.setAttribute("playsinline", "true");
+                video.play();
+                isRunning = true;
+                requestAnimationFrame(scanCycle);
+            }}
+
+            function sendSeatToStreamlit(codeStr) {{
+                window.parent.postMessage({{
+                    type: "streamlit:setComponentValue",
+                    value: codeStr
+                }}, "*");
+            }}
+
+            function scanCycle() {{
+                if (video.readyState === video.HAVE_ENOUGH_DATA && isRunning) {{
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    const cContext = canvas.getContext('2d');
+                    cContext.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    
+                    const imgData = cContext.getImageData(0, 0, canvas.width, canvas.height);
+                    
+                    // 使用原生高效 jsQR 引擎
+                    if (typeof jsQR !== 'undefined') {{
+                        const qrCode = jsQR(imgData.data, imgData.width, imgData.height, {{
+                            inversionAttempts: "dontInvert"
+                        }});
+                        if (qrCode && qrCode.data && qrCode.data.trim() !== '') {{
+                            const seatResult = qrCode.data.trim();
+                            isRunning = false;
+                            status.innerText = "✅ 成功辨識：" + seatResult;
+                            sendSeatToStreamlit(seatResult);
+                            return;
                         }}
                     }}
-                    scanner.start(selectedCam);
-                }} else {{
-                    statusEl.innerText = "❌ 未找到可用的攝影機權限";
                 }}
-            }}).catch(function (e) {{
-                document.getElementById('status-text').innerText = "請允許瀏覽器存取相機權限";
-                console.error(e);
-            }});
+                if (isRunning) {{
+                    requestAnimationFrame(scanCycle);
+                }}
+            }}
         </script>
     </body>
     </html>
     """
-    return components.html(scanner_html, height=250)
+    return components.html(scanner_html, height=270)
 
 # CSS 樣式設定
 st.markdown("""
@@ -345,10 +408,10 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時動態掃描", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時動態自動掃描", "⌨️ 手動輸入"], horizontal=True)
 
-            if input_mode == "📷 鏡頭即時動態掃描":
-                raw_code = android_ios_live_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
+            if input_mode == "📷 鏡頭即時動態自動掃描":
+                raw_code = android_certified_live_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
                 if raw_code:
                     cleaned_val = clean_seat_number(raw_code)
                     if cleaned_val:
@@ -385,6 +448,6 @@ else:
                 else:
                     st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
 
-                if st.button("🔄 驗證下一位"):
+                if st.button("🔄 掃描/驗證下一位"):
                     st.session_state["detected_seat"] = ""
                     st.rerun()
