@@ -5,6 +5,16 @@ from datetime import datetime
 from supabase import create_client, Client
 from streamlit_qrcode_scanner import qrcode_scanner
 
+st.markdown("""
+    <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+
+
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
