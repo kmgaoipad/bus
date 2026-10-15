@@ -25,18 +25,15 @@ def init_supabase():
 
 supabase = init_supabase()
 
-# 安全整理班級座號字串（徹底防禦 DeltaGenerator 與特殊物件）
+# 安全整理班級座號字串
 def clean_seat_number(val):
     if val is None:
         return ""
-    # 只處理字串、整數、浮點數，其餘 Streamlit 元件物件一律傳回空字串
     if not isinstance(val, (str, int, float)):
         return ""
-    
     val_str = str(val).strip()
     if not val_str or "DeltaGenerator" in val_str or "object at" in val_str:
         return ""
-        
     if val_str.endswith('.0'):
         val_str = val_str[:-2]
     return val_str
@@ -108,7 +105,6 @@ def real_time_auto_qr_scanner(key="live_qr_scanner"):
             const ctx = canvas.getContext("2d");
             let isScanning = true;
 
-            // 存取手機/電腦原生的後置攝影鏡頭
             navigator.mediaDevices.getUserMedia({{ video: {{ facingMode: "environment" }} }})
             .then(function(stream) {{
                 video.srcObject = stream;
@@ -126,14 +122,12 @@ def real_time_auto_qr_scanner(key="live_qr_scanner"):
                     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                     var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                     
-                    // jsQR 自動辨識
                     var code = jsQR(imageData.data, imageData.width, imageData.height, {{
                         inversionAttempts: "dontInvert",
                     }});
 
                     if (code && code.data && code.data.trim() !== "") {{
                         let seatNo = code.data.trim();
-                        // 抓取到座號後，即刻將數值傳回 Streamlit，無須點擊任何按鈕
                         window.parent.postMessage({{
                             type: "streamlit:setComponentValue",
                             value: seatNo
@@ -290,4 +284,96 @@ CATEGORY_CONFIG = {
     "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
 }
 
-@
+@st.cache_data
+def load_category_data(file_path, prefix_filter=None):
+    if not os.path.exists(file_path):
+        return None, None
+        
+    xls = pd.ExcelFile(file_path)
+    all_dfs = []
+    
+    target_sheets = xls.sheet_names
+    if prefix_filter:
+        target_sheets = [s for s in xls.sheet_names if s.startswith(prefix_filter)]
+        
+    for sheet_name in target_sheets:
+        df = pd.read_excel(xls, sheet_name=sheet_name)
+        df['路線名稱'] = sheet_name.strip()
+        all_dfs.append(df)
+        
+    if not all_dfs:
+        return None, None
+        
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+    combined_df['班級座號'] = combined_df['班級座號'].apply(clean_seat_number)
+    
+    return combined_df, target_sheets
+
+st.title("🚌 KMSH校車驗證系統")
+
+# 1. 選擇時段類別
+category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
+selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
+
+if selected_category == "-- 請選擇時段/類別 --":
+    st.warning("👈 請先選擇時段/類別。")
+else:
+    config = CATEGORY_CONFIG[selected_category]
+    df, route_list = load_category_data(config["file"], config["filter"])
+
+    if df is None:
+        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認檔案已上傳！")
+    else:
+        # 2. 選擇車輛路線
+        route_options = ["-- 請點此選擇路線 --"] + list(route_list)
+        selected_route = st.selectbox("2. 請選擇車輛路線：", route_options, index=0)
+
+        if selected_route == "-- 請點此選擇路線 --":
+            st.warning("👈 請選擇當前路線以開啟核對功能。")
+        else:
+            if st.session_state["log_id"] and supabase:
+                try:
+                    supabase.table("usage_logs").update({
+                        "route_selected": f"{selected_category} - {selected_route}"
+                    }).eq("id", st.session_state["log_id"]).execute()
+                except Exception:
+                    pass
+
+            st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
+
+            # 3. 驗證方式選擇
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時自動掃描", "⌨️ 手動輸入"], horizontal=True)
+
+            seat_no = ""
+
+            if input_mode == "📷 鏡頭即時自動掃描":
+                raw_code = real_time_auto_qr_scanner(key=f"scanner_{selected_category}_{selected_route}")
+                seat_no = clean_seat_number(raw_code)
+            else:
+                raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
+                seat_no = clean_seat_number(raw_input)
+
+            # 4. 進行驗證與結果顯示
+            if seat_no:
+                student_records = df[df['班級座號'] == seat_no]
+                st.divider()
+                
+                if not student_records.empty:
+                    student_info = student_records.iloc[0]
+                    actual_route = student_info['路線名稱']
+                    student_name = student_info['學生姓名']
+                    
+                    station_name = student_info.get('放學站名') or student_info.get('上學站名') or "未設定"
+                    station_no = student_info.get('放學站號') or student_info.get('上學站號') or "未設定"
+                    
+                    if selected_route == actual_route:
+                        st.success(f"✅ **准予上車！【{student_name}】**")
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("姓名", student_name)
+                        col2.metric("座號", seat_no)
+                        col3.metric("站名", f"{station_name} ({station_no})")
+                    else:
+                        st.error(f"🚫 **警告！【{student_name}】搭錯車！**")
+                        st.warning(f"⚠️ 應搭乘：**【{actual_route}】** ｜ 站名：{station_name} ({station_no})")
+                else:
+                    st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
