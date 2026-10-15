@@ -1,9 +1,9 @@
 import os
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime
 from supabase import create_client, Client
-from streamlit_qrcode_scanner import qrcode_scanner
 
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
@@ -45,11 +45,60 @@ def load_users():
     except Exception:
         return None
 
+# 相容 Android & iOS 的跨平台 QR Code 掃描器組件
+def android_compatible_qr_scanner(key="qr_scanner"):
+    # 使用 html5-qrcode 庫，完整支援 Android Chrome 與 iOS Safari 的相機硬體
+    scanner_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+        <style>
+            #reader {{
+                width: 100%;
+                max-width: 360px;
+                margin: 0 auto;
+                border-radius: 8px;
+                overflow: hidden;
+            }}
+            #reader__scan_region video {{
+                object-fit: cover !important;
+                max-height: 220px !important;
+            }}
+        </style>
+    </head>
+    <body style="margin:0; padding:0; text-align:center;">
+        <div id="reader"></div>
+        <script>
+            function onScanSuccess(decodedText, decodedResult) {{
+                // 將掃描到的文字回傳給 Streamlit
+                window.parent.postMessage({{
+                    type: "streamlit:setComponentValue",
+                    value: decodedText
+                }}, "*");
+            }}
+
+            let html5QrcodeScanner = new Html5QrcodeScanner(
+                "reader", 
+                {{ 
+                    fps: 10, 
+                    qrbox: {{width: 200, height: 200}},
+                    facingMode: "environment" // 預設強制使用後置鏡頭
+                }},
+                /* verbose= */ false
+            );
+            html5QrcodeScanner.render(onScanSuccess);
+        </script>
+    </body>
+    </html>
+    """
+    return components.html(scanner_html, height=260)
+
 # CSS 樣式設定
 st.markdown("""
     <style>
         .block-container {
-            padding-top: 2rem !important;
+            padding-top: 1.5rem !important;
             padding-bottom: 1.5rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
@@ -57,9 +106,6 @@ st.markdown("""
         h1 {
             font-size: 1.4rem !important;
             margin-bottom: 0.3rem !important;
-        }
-        iframe[title*="qrcode_scanner"] {
-            max-height: 220px !important;
         }
         .stAlert {
             padding: 8px 12px !important;
@@ -209,8 +255,6 @@ def load_category_data(file_path, prefix_filter=None):
         return None, None
         
     combined_df = pd.concat(all_dfs, ignore_index=True)
-    
-    # 統一清理「班級座號」格式，避免 .0 影響比對
     combined_df['班級座號'] = combined_df['班級座號'].apply(clean_seat_number)
     
     return combined_df, target_sheets
@@ -237,7 +281,6 @@ else:
         if selected_route == "-- 請點此選擇路線 --":
             st.warning("👈 請選擇當前路線以開啟核對功能。")
         else:
-            # 紀錄選擇路線至紀錄表
             if st.session_state["log_id"] and supabase:
                 try:
                     supabase.table("usage_logs").update({
@@ -254,7 +297,8 @@ else:
             seat_no = ""
 
             if input_mode == "📷 鏡頭掃描":
-                qr_code_val = qrcode_scanner(key=f"bus_qr_scanner_{selected_category}_{selected_route}")
+                # 使用 Android & iOS 雙平台相容的相機元件
+                qr_code_val = android_compatible_qr_scanner(key=f"scanner_{selected_category}_{selected_route}")
                 if qr_code_val:
                     seat_no = clean_seat_number(qr_code_val)
             else:
@@ -271,7 +315,6 @@ else:
                     actual_route = student_info['路線名稱']
                     student_name = student_info['學生姓名']
                     
-                    # 相容「放學站名/上學站名」與「放學站號/上學站號」欄位
                     station_name = student_info.get('放學站名') or student_info.get('上學站名') or "未設定"
                     station_no = student_info.get('放學站號') or student_info.get('上學站號') or "未設定"
                     
