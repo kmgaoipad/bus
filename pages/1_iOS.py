@@ -41,19 +41,20 @@ def clean_seat_number(val):
     if not isinstance(val, (str, int, float)):
         return ""
     val_str = str(val).strip()
-    if not val_str or "DeltaGenerator" in val_str:
+    if not val_str or "DeltaGenerator" in val_str or "object at" in val_str:
         return ""
     if val_str.endswith('.0'):
         val_str = val_str[:-2]
     return val_str
 
-# iOS Canvas 繪製專用相機元件 (100% 成功秒傳數據)
-def ios_canvas_scanner():
+# 🍎 iOS 專用雙向通訊相機元件 (宣告 declare_component)
+def custom_ios_qr_scanner(key=None):
     scanner_html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/streamlit-component-lib@1.4.0/dist/streamlit.min.js"></script>
         <style>
             #wrapper {{ width: 100%; max-width: 320px; margin: 0 auto; text-align: center; position: relative; }}
             #canvas-view {{ width: 100%; height: 230px; border-radius: 12px; border: 2px solid #28a745; background-color: #000; object-fit: cover; }}
@@ -81,13 +82,18 @@ def ios_canvas_scanner():
             let lastScannedCode = "";
             let isScanning = false;
 
+            // 告知 Streamlit 容器預備就緒
+            if (window.Streamlit) {{
+                window.Streamlit.setComponentReady();
+            }}
+
             function initIosCam() {{
                 document.getElementById("start-btn").style.display = "none";
                 document.getElementById("cam-box").style.display = "block";
                 statusMsg.innerText = "🎯 請將 QR Code 放入對焦框內...";
 
                 const constraintsList = [
-                    {{ video: {{ facingMode: {{ exact: "environment" }} }} }},
+                    {{ video: {{ facingMode: {{ exact: "environment" }}, width: {{ ideal: 640 }}, height: {{ ideal: 480 }} }} }},
                     {{ video: {{ facingMode: "environment" }} }},
                     {{ video: true }}
                 ];
@@ -96,7 +102,7 @@ def ios_canvas_scanner():
 
             function tryGetUserMedia(list, idx) {{
                 if (idx >= list.length) {{
-                    statusMsg.innerText = "❌ 相機開啟失敗，請確認 Safari 已允許權限。";
+                    statusMsg.innerText = "❌ 相機開啟失敗，請確認 Safari 已允許相機權限。";
                     return;
                 }}
                 navigator.mediaDevices.getUserMedia(list[idx])
@@ -113,19 +119,9 @@ def ios_canvas_scanner():
             }}
 
             function sendSeatToPython(seatVal) {{
-                try {{
-                    // 使用多重廣播機制，讓 Python 100% 接收到座號
-                    let searchParams = new URLSearchParams(window.top.location.search);
-                    searchParams.set("seat", seatVal);
-                    window.top.location.search = searchParams.toString();
-                }} catch (e) {{
-                    try {{
-                        let searchParams = new URLSearchParams(window.parent.location.search);
-                        searchParams.set("seat", seatVal);
-                        window.parent.location.search = searchParams.toString();
-                    }} catch (err) {{
-                        console.log(err);
-                    }}
+                // 透過 Streamlit Component API 100% 傳回數值給 Python，觸發比對
+                if (window.Streamlit) {{
+                    window.Streamlit.setComponentValue(seatVal);
                 }}
             }}
 
@@ -143,7 +139,7 @@ def ios_canvas_scanner():
                             let cleanCode = qrCode.data.trim();
                             if (cleanCode !== lastScannedCode) {{
                                 lastScannedCode = cleanCode;
-                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode + "，即刻比對中...";
+                                statusMsg.innerText = "⚡ 辨識成功：" + cleanCode;
                                 sendSeatToPython(cleanCode);
                             }}
                         }}
@@ -155,7 +151,9 @@ def ios_canvas_scanner():
     </body>
     </html>
     """
-    return components.html(scanner_html, height=290)
+    # 宣告自訂組件，讓 Streamlit 能夠直接接收 return 回來的傳值
+    comp_func = components.declare_component("ios_scanner_component", html=scanner_html)
+    return comp_func(key=key)
 
 CATEGORY_CONFIG = {
     "上學": {"file": "上學各路線名單.xlsx", "filter": None},
@@ -225,16 +223,16 @@ else:
 
             seat_no = ""
             if input_mode == "📷 iPhone 相機對焦連刷":
-                # 直接讀取 URL query 參數傳回的座號 (100% 傳遞成功)
-                url_seat = st.query_params.get("seat", "")
-                if url_seat:
-                    seat_no = clean_seat_number(url_seat)
-                ios_canvas_scanner()
+                # 直接捕捉自訂組件回傳的數值，秒級判定
+                scanned_val = custom_ios_qr_scanner(key=f"ios_cam_{selected_category}_{selected_route}")
+                if scanned_val:
+                    seat_no = clean_seat_number(scanned_val)
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
                     seat_no = clean_seat_number(raw_input)
 
+            # 4. 進行驗證與結果顯示
             if seat_no:
                 st.divider()
                 student_records = df[df['班級座號'] == seat_no]
