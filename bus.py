@@ -1,10 +1,7 @@
 import os
-import io
 import pandas as pd
 import streamlit as st
-import cv2
-import numpy as np
-from PIL import Image
+import streamlit.components.v1 as components
 from datetime import datetime
 from supabase import create_client, Client
 
@@ -14,13 +11,11 @@ st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout
 USER_FILE = "校車驗證系統使用者名單.xlsx"
 
 # 1. Supabase 連線設定
-SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
-SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "您的_SUPABASE_URL")
+SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "您的_SUPABASE_ANON_KEY")
 
 @st.cache_resource
 def init_supabase():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return None
     try:
         return create_client(SUPABASE_URL, SUPABASE_KEY)
     except Exception:
@@ -41,35 +36,6 @@ def clean_seat_number(val):
         val_str = val_str[:-2]
     return val_str
 
-# 使用 OpenCV 原生對拍照/即時串流影像進行 QR Code 解碼 (100% 跨平台相容)
-def scan_qr_from_camera_input(camera_bytes):
-    try:
-        image = Image.open(io.BytesIO(camera_bytes))
-        img_np = np.array(image.convert('RGB'))
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-        
-        # 1. 直接 OpenCV QRCodeDetector
-        qr_detector = cv2.QRCodeDetector()
-        data, bbox, _ = qr_detector.detectAndDecode(gray)
-        if data:
-            return data.strip()
-            
-        # 2. 影像增強對比 (針對防亮光/陰影優化)
-        enhanced = cv2.equalizeHist(gray)
-        data_enh, _, _ = qr_detector.detectAndDecode(enhanced)
-        if data_enh:
-            return data_enh.strip()
-            
-        # 3. 多重 QR Code 解碼
-        retval, decoded_info, _, _ = qr_detector.detectAndDecodeMulti(gray)
-        if retval and decoded_info:
-            for d in decoded_info:
-                if d.strip():
-                    return d.strip()
-    except Exception:
-        pass
-    return ""
-
 # 讀取使用者名單 Excel
 @st.cache_data
 def load_users():
@@ -82,6 +48,101 @@ def load_users():
         return df_users
     except Exception:
         return None
+
+# Android & iOS 全自動相容鏡頭掃描元件
+def android_ios_live_qr_scanner(key_name="live_qr"):
+    scanner_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <script type="text/javascript" src="https://rawgit.com/schmich/instascan-builds/master/instascan.min.js"></script>
+        <style>
+            #scanner-container {{
+                position: relative;
+                width: 100%;
+                max-width: 320px;
+                margin: 0 auto;
+                text-align: center;
+            }}
+            #preview {{
+                width: 100%;
+                height: 220px;
+                object-fit: cover;
+                border-radius: 8px;
+                border: 2px solid #007bff;
+                background-color: #000;
+            }}
+            .scan-line {{
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 2px;
+                background: #00ff00;
+                box-shadow: 0 0 8px #00ff00;
+                animation: scan 2s infinite linear;
+            }}
+            @keyframes scan {{
+                0% {{ top: 0%; }}
+                50% {{ top: 95%; }}
+                100% {{ top: 0%; }}
+            }}
+            #status-text {{
+                font-size: 12px;
+                color: #666;
+                margin-top: 4px;
+            }}
+        </style>
+    </head>
+    <body style="margin:0; padding:0; background:transparent;">
+        <div id="scanner-container">
+            <video id="preview" playsinline></video>
+            <div class="scan-line"></div>
+            <div id="status-text">相機初始化中...</div>
+        </div>
+
+        <script type="text/javascript">
+            let scanner = new Instascan.Scanner({{ 
+                video: document.getElementById('preview'),
+                scanPeriod: 5,
+                mirror: false
+            }});
+
+            scanner.addListener('scan', function (content) {{
+                if (content && content.trim() !== '') {{
+                    let seatNo = content.trim();
+                    window.parent.postMessage({{
+                        type: "streamlit:setComponentValue",
+                        value: seatNo
+                    }}, "*");
+                }}
+            }});
+
+            Instascan.Camera.getCameras().then(function (cameras) {{
+                let statusEl = document.getElementById('status-text');
+                if (cameras.length > 0) {{
+                    statusEl.innerText = "相機運作中（自動對準 QR Code）";
+                    // 優先使用最後一個鏡頭 (通常是 Android/iOS 後置鏡頭)
+                    let selectedCam = cameras[cameras.length - 1];
+                    for (let i = 0; i < cameras.length; i++) {{
+                        if (cameras[i].name && cameras[i].name.toLowerCase().includes('back')) {{
+                            selectedCam = cameras[i];
+                            break;
+                        }}
+                    }}
+                    scanner.start(selectedCam);
+                }} else {{
+                    statusEl.innerText = "❌ 未找到可用的攝影機權限";
+                }}
+            }}).catch(function (e) {{
+                document.getElementById('status-text').innerText = "請允許瀏覽器存取相機權限";
+                console.error(e);
+            }});
+        </script>
+    </body>
+    </html>
+    """
+    return components.html(scanner_html, height=250)
 
 # CSS 樣式設定
 st.markdown("""
@@ -123,11 +184,6 @@ st.markdown("""
         }
         [data-testid="stMetricLabel"] {
             font-size: 0.75rem !important;
-        }
-        /* 壓縮 Streamlit Camera Input 按鈕尺寸 */
-        div[data-testid="stCameraInput"] {
-            max-width: 320px;
-            margin: 0 auto;
         }
     </style>
 """, unsafe_allow_html=True)
@@ -289,18 +345,14 @@ else:
             st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
 
             # 3. 驗證方式選擇
-            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描/拍攝", "⌨️ 手動輸入"], horizontal=True)
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭即時動態掃描", "⌨️ 手動輸入"], horizontal=True)
 
-            if input_mode == "📷 鏡頭掃描/拍攝":
-                st.caption("👇 請對準學生證 QR Code 按下「拍攝」即可完成判斷：")
-                cam_photo = st.camera_input("鏡頭掃描視窗", key=f"native_cam_{selected_category}_{selected_route}", label_visibility="collapsed")
-                if cam_photo is not None:
-                    bytes_data = cam_photo.getvalue()
-                    qr_code_res = scan_qr_from_camera_input(bytes_data)
-                    if qr_code_res:
-                        st.session_state["detected_seat"] = clean_seat_number(qr_code_res)
-                    else:
-                        st.warning("⚠️ 照片未能清楚辨識出 QR Code，請試著靠近對焦並重新拍攝。")
+            if input_mode == "📷 鏡頭即時動態掃描":
+                raw_code = android_ios_live_qr_scanner(key_name=f"scanner_{selected_category}_{selected_route}")
+                if raw_code:
+                    cleaned_val = clean_seat_number(raw_code)
+                    if cleaned_val:
+                        st.session_state["detected_seat"] = cleaned_val
             else:
                 raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
                 if raw_input:
