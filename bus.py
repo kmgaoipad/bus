@@ -32,11 +32,12 @@ CATEGORY_CONFIG = {
     "週一小放學 (第2梯)": {"file": "週1小放學2梯各路線名單.xlsx", "filter": None},
     "週二小放學 (第1梯)": {"file": "週2小放學1梯各路線名單.xlsx", "filter": None},
     "週二小放學 (第2梯)": {"file": "週2小放學2梯各路線名單.xlsx", "filter": None},
-    "週三小放學": {"file": "週3小放學各路線名單.xlsx", "filter": None},
+    "週三小放學 (第1梯)": {"file": "週3小放學1梯各路線名單.xlsx", "filter": None},
+    "週三小放學 (第2梯)": {"file": "週3小放學2梯各路線名單.xlsx", "filter": None},
     "週四小放學 (第1梯)": {"file": "週4小放學1梯各路線名單.xlsx", "filter": None},
     "週四小放學 (第2梯)": {"file": "週4小放學2梯各路線名單.xlsx", "filter": None},
-    "週五小放學": {"file": "週5小放學各路線名單.xlsx", "filter": None},
-    "高國三週六課程": {"file": "週六課程各路線名單.xlsx", "filter": None}
+    "週五小放學 (第1梯)": {"file": "週5小放學1梯各路線名單.xlsx", "filter": None},
+    "週五小放學 (第2梯)": {"file": "週5小放學2梯各路線名單.xlsx", "filter": None}
 }
 
 # 1. Supabase 連線設定
