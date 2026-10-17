@@ -100,11 +100,11 @@ def load_category_data(file_path, prefix_filter=None):
     
     return combined_df, target_sheets
 
-# CSS 樣式設定 (修正頂部裁切問題並優化手持設備佈局)
+# CSS 樣式設定 (修復手機版下拉選單無法點擊 & 修正邊界問題)
 st.markdown("""
     <style>
         .block-container {
-            padding-top: 1.5rem !important;
+            padding-top: 1.8rem !important;
             padding-bottom: 1rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
@@ -114,11 +114,24 @@ st.markdown("""
             margin-bottom: 0.3rem !important;
         }
         div[data-testid="stVerticalBlock"] > div {
-            gap: 0.4rem !important;
+            gap: 0.5rem !important;
         }
+        
+        /* 解決下拉選單在手機版被掃描器或容器遮擋點擊的問題 */
+        div[data-baseweb="popover"], div[data-baseweb="menu"], [role="listbox"] {
+            z-index: 99999 !important;
+        }
+        div[data-baseweb="select"] {
+            z-index: 9999 !important;
+        }
+        
+        /* 限制掃描器高度與層級，防止遮擋頂部選單 */
         iframe[title*="qrcode_scanner"] {
             max-height: 180px !important;
+            position: relative !important;
+            z-index: 1 !important;
         }
+        
         .stAlert {
             padding: 8px 12px !important;
             margin-top: 0.3rem !important;
