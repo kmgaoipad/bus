@@ -265,4 +265,180 @@ if st.session_state["is_admin"]:
     st.divider()
 
     if not supabase:
-        st
+        st.error("❌ 未設定或無法連線至 Supabase 資料庫，無法讀取記錄。")
+        st.stop()
+
+    try:
+        response = supabase.table("usage_logs").select("*").order("id", desc=True).execute()
+        records = response.data
+    except Exception as e:
+        st.error(f"讀取記錄失敗：{e}")
+        st.stop()
+
+    if not records:
+        st.info("目前尚無任何登入記錄。")
+        st.stop()
+
+    st.subheader(f"📋 登入紀錄列表（共 {len(records)} 筆）")
+
+    if st.button("🗑️ 刪除全部記錄", type="primary"):
+        try:
+            all_ids = [r["id"] for r in records]
+            supabase.table("usage_logs").delete().in_("id", all_ids).execute()
+            st.success("已成功清空所有登入記錄！")
+            st.rerun()
+        except Exception as e:
+            st.error(f"刪除失敗：{e}")
+
+    st.write("")
+
+    if "selected_delete_ids" not in st.session_state:
+        st.session_state["selected_delete_ids"] = set()
+
+    h1, h2, h3, h4, h5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
+    h1.write("**選取**")
+    h2.write("**使用者資訊**")
+    h3.write("**登入時間**")
+    h4.write("**選擇路線**")
+    h5.write("**操作**")
+    st.divider()
+
+    for row in records:
+        rec_id = row["id"]
+        c1, c2, c3, c4, c5 = st.columns([0.6, 2.5, 2.5, 2.5, 1])
+        
+        is_chk = c1.checkbox("", key=f"chk_{rec_id}")
+        if is_chk:
+            st.session_state["selected_delete_ids"].add(rec_id)
+        else:
+            st.session_state["selected_delete_ids"].discard(rec_id)
+            
+        c2.write(row.get("user_email", "未知"))
+        
+        raw_time = row.get("login_time", "無記錄")
+        formatted_time = raw_time.replace("T", " ")[:19] if raw_time else "無紀錄"
+        c3.write(formatted_time)
+        
+        c4.write(row.get("route_selected", "未選擇"))
+        
+        if c5.button("❌ 刪除", key=f"del_btn_{rec_id}"):
+            try:
+                supabase.table("usage_logs").delete().eq("id", rec_id).execute()
+                st.success(f"已刪除 ID: {rec_id} 的記錄")
+                st.rerun()
+            except Exception as e:
+                st.error(f"刪除失敗：{e}")
+
+    st.divider()
+
+    if st.button("🗑️ 刪除勾選項目（部份刪除）", type="secondary"):
+        selected_ids = list(st.session_state["selected_delete_ids"])
+        if selected_ids:
+            try:
+                supabase.table("usage_logs").delete().in_("id", selected_ids).execute()
+                st.session_state["selected_delete_ids"].clear()
+                st.success(f"已成功刪除 {len(selected_ids)} 筆記錄！")
+                st.rerun()
+            except Exception as e:
+                st.error(f"刪除失敗：{e}")
+        else:
+            st.warning("⚠️ 請先勾選要刪除的記錄。")
+
+    st.stop()
+
+# ---------------------------------------------------------
+# 🚌 一般使用者：主系統畫面
+# ---------------------------------------------------------
+
+col_title, col_user_info = st.columns([2, 1])
+
+with col_title:
+    st.title("🚌 KMSH校車驗證系統")
+
+with col_user_info:
+    st.write(f"👤 **{st.session_state['user_name']}** ({st.session_state['user_id']})")
+    if st.button("🚪 安全登出", type="secondary", use_container_width=True):
+        if st.session_state["log_id"] and supabase:
+            try:
+                supabase.table("usage_logs").update({
+                    "logout_time": datetime.now().isoformat()
+                }).eq("id", st.session_state["log_id"]).execute()
+            except Exception:
+                pass
+                
+        st.session_state["authenticated"] = False
+        st.session_state["is_admin"] = False
+        st.session_state["user_id"] = ""
+        st.session_state["user_name"] = ""
+        st.session_state["log_id"] = None
+        st.rerun()
+
+st.divider()
+
+# 1. 選擇時段類別
+category_options = ["-- 請選擇時段/類別 --"] + list(CATEGORY_CONFIG.keys())
+selected_category = st.selectbox("1. 請先選擇搭乘時段/類別：", category_options, index=0)
+
+if selected_category == "-- 請選擇時段/類別 --":
+    st.warning("👈 請先選擇時段/類別。")
+else:
+    config = CATEGORY_CONFIG[selected_category]
+    df, route_list = load_category_data(config["file"], config["filter"])
+
+    if df is None:
+        st.error(f"❌ 找不到類別【{selected_category}】對應的資料庫檔案 (`{config['file']}`)，請確認檔案已上傳！")
+    else:
+        # 2. 選擇車輛路線
+        route_options = ["-- 請點此選擇路線 --"] + list(route_list)
+        selected_route = st.selectbox("2. 請選擇車輛路線：", route_options, index=0)
+
+        if selected_route == "-- 請點此選擇路線 --":
+            st.warning("👈 請選擇當前路線以開啟核對功能。")
+        else:
+            # 紀錄選擇路線至紀錄表
+            if st.session_state["log_id"] and supabase:
+                try:
+                    supabase.table("usage_logs").update({
+                        "route_selected": f"{selected_category} - {selected_route}"
+                    }).eq("id", st.session_state["log_id"]).execute()
+                except Exception:
+                    pass
+
+            st.markdown(f'<div class="route-info">📌 當前選擇：<b>【{selected_category}】➔ {selected_route}</b></div>', unsafe_allow_html=True)
+
+            # 3. 驗證方式選擇
+            input_mode = st.radio("3. 驗證方式：", ["📷 鏡頭掃描", "⌨️ 手動輸入"], horizontal=True)
+
+            seat_no = ""
+
+            if input_mode == "📷 鏡頭掃描":
+                qr_code_val = qrcode_scanner(key=f"bus_qr_scanner_{selected_category}_{selected_route}")
+                if qr_code_val:
+                    seat_no = clean_seat_number(qr_code_val)
+            else:
+                raw_input = st.text_input("輸入座號：", placeholder="例如：20402").strip()
+                seat_no = clean_seat_number(raw_input)
+
+            # 4. 進行驗證與結果顯示
+            if seat_no:
+                student_records = df[df['班級座號'] == seat_no]
+                
+                if not student_records.empty:
+                    student_info = student_records.iloc[0]
+                    actual_route = student_info['路線名稱']
+                    student_name = student_info['學生姓名']
+                    
+                    station_name = student_info.get('放學站名') or student_info.get('上學站名') or "未設定"
+                    station_no = student_info.get('放學站號') or student_info.get('上學站號') or "未設定"
+                    
+                    if selected_route == actual_route:
+                        st.success(f"✅ **准予上車！【{student_name}】**")
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("姓名", student_name)
+                        col2.metric("座號", seat_no)
+                        col3.metric("站名", f"{station_name} ({station_no})")
+                    else:
+                        st.error(f"🚫 **警告！【{student_name}】搭錯車！**")
+                        st.warning(f"⚠️ 應搭乘：**【{actual_route}】** ｜ 站名：{station_name} ({station_no})")
+                else:
+                    st.error(f"❌ **查無此座號（{seat_no}）在【{selected_category}】的名單紀錄。**")
