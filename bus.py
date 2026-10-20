@@ -8,15 +8,15 @@ from streamlit_qrcode_scanner import qrcode_scanner
 # 設定網頁標題與頁面圖示
 st.set_page_config(page_title="KMSH校車驗證系統", page_icon="🚌", layout="centered")
 
-# 隱藏左側邊欄
+# 隱藏左側邊欄與優化手機端選單滑動
 st.markdown("""
     <style>
         [data-testid="stSidebar"] {
             display: none;
         }
         .block-container {
-            padding-top: 2.2rem !important;
-            padding-bottom: 1.5rem !important;
+            padding-top: 2.5rem !important;
+            padding-bottom: 2rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
         }
@@ -29,38 +29,43 @@ st.markdown("""
         }
 
         /* -------------------------------------------------- */
-        /* 📱 手機版下拉選單 (Selectbox Popover) 捲動極致修復   */
+        /* 📱 iOS/Android 手機選單防遮擋與捲動專用 CSS        */
         /* -------------------------------------------------- */
         
-        /* 1. 提高下拉選單彈出容器層級 */
+        /* 1. 提升選單 Popover 層級 */
         div[data-baseweb="popover"] {
             z-index: 999999 !important;
         }
         
-        /* 2. 強制選單選框容器可平滑捲動，不被手機頂部切斷 */
+        /* 2. 限制選單內浮動視窗高度，並允許觸控流暢捲動 */
         div[data-baseweb="popover"] > div {
-            max-height: 50vh !important;
-            overflow-y: auto !important;
+            max-height: 40vh !important;
+            overflow-y: scroll !important;
             -webkit-overflow-scrolling: touch !important;
             overscroll-behavior: contain !important;
+            border: 2px solid #007bff !important;
+            border-radius: 8px !important;
         }
 
-        /* 3. 選單列表 (Ul/Li) 樣式與觸控空間優化 */
+        /* 3. 強制選單列表 (UL) 頂部留白，確保最上方的選項（如「上學」）不會被切掉 */
         ul[role="listbox"] {
-            max-height: 45vh !important;
-            overflow-y: auto !important;
-            padding-top: 5px !important;
-            padding-bottom: 15px !important;
+            max-height: 38vh !important;
+            overflow-y: scroll !important;
+            -webkit-overflow-scrolling: touch !important;
+            padding-top: 15px !important;
+            padding-bottom: 20px !important;
         }
         
+        /* 4. 選單選項按鈕放寬，適合手機手指點擊 */
         li[role="option"] {
-            padding-top: 12px !important;
-            padding-bottom: 12px !important;
-            font-size: 1rem !important;
-            min-height: 44px !important; /* 符合手機標準觸控點擊高度 */
+            padding-top: 14px !important;
+            padding-bottom: 14px !important;
+            font-size: 1.05rem !important;
+            min-height: 48px !important;
+            border-bottom: 1px solid #f0f0f0 !important;
         }
 
-        /* 4. 降低鏡頭掃描器層級，確保選單永遠浮在最上層 */
+        /* 5. 降低 QR 碼掃描器層級，避免壓到選單 */
         iframe[title*="qrcode_scanner"] {
             max-height: 180px !important;
             position: relative !important;
