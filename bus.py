@@ -15,7 +15,7 @@ st.markdown("""
             display: none;
         }
         .block-container {
-            padding-top: 2rem !important;
+            padding-top: 2.2rem !important;
             padding-bottom: 1.5rem !important;
             padding-left: 0.8rem !important;
             padding-right: 0.8rem !important;
@@ -27,28 +27,46 @@ st.markdown("""
         div[data-testid="stVerticalBlock"] > div {
             gap: 0.5rem !important;
         }
-        /* 修復手機版下拉選單層級與高度 */
+
+        /* -------------------------------------------------- */
+        /* 📱 手機版下拉選單 (Selectbox Popover) 捲動極致修復   */
+        /* -------------------------------------------------- */
+        
+        /* 1. 提高下拉選單彈出容器層級 */
         div[data-baseweb="popover"] {
-            z-index: 99999 !important;
+            z-index: 999999 !important;
         }
+        
+        /* 2. 強制選單選框容器可平滑捲動，不被手機頂部切斷 */
         div[data-baseweb="popover"] > div {
+            max-height: 50vh !important;
+            overflow-y: auto !important;
+            -webkit-overflow-scrolling: touch !important;
+            overscroll-behavior: contain !important;
+        }
+
+        /* 3. 選單列表 (Ul/Li) 樣式與觸控空間優化 */
+        ul[role="listbox"] {
             max-height: 45vh !important;
             overflow-y: auto !important;
+            padding-top: 5px !important;
+            padding-bottom: 15px !important;
         }
-        ul[role="listbox"] {
-            max-height: 40vh !important;
-            overflow-y: auto !important;
-        }
+        
         li[role="option"] {
-            padding-top: 10px !important;
-            padding-bottom: 10px !important;
-            font-size: 0.95rem !important;
+            padding-top: 12px !important;
+            padding-bottom: 12px !important;
+            font-size: 1rem !important;
+            min-height: 44px !important; /* 符合手機標準觸控點擊高度 */
         }
+
+        /* 4. 降低鏡頭掃描器層級，確保選單永遠浮在最上層 */
         iframe[title*="qrcode_scanner"] {
             max-height: 180px !important;
             position: relative !important;
             z-index: 1 !important;
         }
+
         .route-info {
             font-size: 0.85rem !important;
             color: #155724;
