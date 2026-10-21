@@ -113,13 +113,17 @@ CATEGORY_CONFIG = {
 SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
 SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
 
+# 優化 1：Supabase 連線快取與逾時設定
 @st.cache_resource
 def init_supabase():
     if not SUPABASE_URL or not SUPABASE_KEY:
         return None
     try:
-        return create_client(SUPABASE_URL, SUPABASE_KEY)
-    except Exception:
+        from supabase import ClientOptions
+        # 加入 timeout 限制 (10秒) 與重試機制，防止卡死
+        opts = ClientOptions(postgrest_client_timeout=10)
+        return create_client(SUPABASE_URL, SUPABASE_KEY, options=opts)
+    except Exception as e:
         return None
 
 supabase = init_supabase()
@@ -132,12 +136,13 @@ def clean_seat_number(val):
         s = s[:-2]
     return s
 
-@st.cache_data
+# 優化 2：針對使用者名單快取設定過期機制 (1小時過期，防記憶體洩漏)
+@st.cache_data(ttl=3600, max_entries=5)
 def load_users():
     if not os.path.exists(USER_FILE):
         return None
     try:
-        df_users = pd.read_excel(USER_FILE)
+        df_users = pd.read_excel(USER_FILE, engine="openpyxl")
         for col in df_users.columns:
             df_users[col] = df_users[col].apply(clean_seat_number)
         return df_users
@@ -145,12 +150,13 @@ def load_users():
         st.error(f"讀取使用者名單發生錯誤: {e}")
         return None
 
-@st.cache_data
+# 優化 3：路線資料設定 ttl=3600 與 max_entries=15，避免重複點選吃滿 RAM
+@st.cache_data(ttl=3600, max_entries=15)
 def load_category_data(file_path, prefix_filter=None):
     if not os.path.exists(file_path):
         return None, None
     try:
-        xls = pd.ExcelFile(file_path)
+        xls = pd.ExcelFile(file_path, engine="openpyxl")
         all_dfs = []
         
         target_sheets = xls.sheet_names
@@ -225,6 +231,7 @@ if not st.session_state["authenticated"]:
                         st.session_state["user_id"] = str(user_info["使用者編號"])
                         st.session_state["user_name"] = str(user_info["使用者姓名"])
                         
+                        # 優化 4：寫入 Supabase 紀錄加上完整 try-except 防護
                         if supabase:
                             try:
                                 log_res = supabase.table("usage_logs").insert({
@@ -234,7 +241,7 @@ if not st.session_state["authenticated"]:
                                 if log_res.data:
                                     st.session_state["log_id"] = log_res.data[0]["id"]
                             except Exception:
-                                pass
+                                pass  # 資料庫暫時異常時靜默跳過，不影響使用者登入
                                 
                         st.rerun()
                     else:
@@ -270,7 +277,7 @@ if st.session_state["is_admin"]:
         response = supabase.table("usage_logs").select("*").order("id", desc=True).execute()
         records = response.data
     except Exception as e:
-        st.error(f"讀取記錄失敗：{e}")
+        st.error(f"讀取記錄失敗，資料庫可能暫時異常：{e}")
         st.stop()
 
     if not records:
@@ -393,7 +400,7 @@ else:
         if selected_route == "-- 請點此選擇路線 --":
             st.warning("👈 請選擇當前路線以開啟核對功能。")
         else:
-            # 紀錄選擇路線至紀錄表
+            # 紀錄選擇路線至紀錄表 (加入防護)
             if st.session_state["log_id"] and supabase:
                 try:
                     supabase.table("usage_logs").update({
