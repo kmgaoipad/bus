@@ -2,8 +2,9 @@ name: Keep App Alive
 
 on:
   schedule:
-    # 每天每 3 小時自動發送一次 GET 請求
+    # 每天每 3 小時自動執行一次
     - cron: '0 */3 * * *'
+  # 允許手動測試執行
   workflow_dispatch:
 
 jobs:
@@ -12,4 +13,4 @@ jobs:
     steps:
       - name: Send GET Request to Streamlit
         run: |
-          curl -L -s -o /dev/null -w "%{http_code}\n" "https://bfjhhvc9llbapphi4wjcqxt.streamlit.app"
+          curl -L --max-redirs 20 --connect-timeout 30 -A "Mozilla/5.0" -s -o /dev/null -w "Response code: %{http_code}\n" "https://bfjhhvc9llbapphi4wjcqxt.streamlit.app" || true
