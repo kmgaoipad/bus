@@ -2,9 +2,9 @@ name: Streamlit Keep Alive
 
 on:
   schedule:
-    # 每 10 分鐘執行一次
+    # 每 10 分鐘自動執行一次 (UTC 時間)
     - cron: '*/10 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # 保留手動觸發按鈕
 
 jobs:
   ping:
@@ -13,24 +13,24 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Install Playwright
         run: |
           npm install playwright
           npx playwright install chromium --with-deps
 
-      - name: Run Headless Browser Visit
+      - name: Ping Streamlit with Browser
         run: |
           node -e "
           const { chromium } = require('playwright');
           (async () => {
             const browser = await chromium.launch();
             const page = await browser.newPage();
-            console.log('連線至 Streamlit App...');
+            console.log('連線中...');
             await page.goto('https://bfjhhvc9llbapphi4wjcqxt.streamlit.app', { waitUntil: 'networkidle', timeout: 60000 });
-            await page.waitForTimeout(5000); // 確保 WebSocket 連線建立完畢
-            console.log('頁面標題:', await page.title());
+            await page.waitForTimeout(5000);
+            console.log('連線成功，頁面標題:', await page.title());
             await browser.close();
           })();
           "
